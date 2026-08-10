@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/osvaldo/herdr-sesh/raw/main/sesh.schema.json",
+  "title": "herdr-sesh configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "strict_mode": { "type": "boolean", "default": false },
+    "import": { "type": "array", "items": { "type": "string" } },
+    "blacklist": { "type": "array", "items": { "type": "string" } },
+    "sort_order": { "type": "array", "items": { "enum": ["herdr", "config", "zoxide"] } },
+    "dir_length": { "type": "integer", "minimum": 1, "default": 1 },
+    "git_dir_length": { "type": "integer", "minimum": 1, "default": 1 },
+    "git_namer_use_worktree_root": { "type": "boolean", "default": false },
+    "terminal": { "type": "string" },
+    "default_session": { "$ref": "#/$defs/defaultSession" },
+    "frecency": { "$ref": "#/$defs/frecency" },
+    "tui": { "$ref": "#/$defs/tui" },
+    "session": { "type": "array", "items": { "$ref": "#/$defs/session" } },
+    "window": { "type": "array", "items": { "$ref": "#/$defs/window" } },
+    "wildcard": { "type": "array", "items": { "$ref": "#/$defs/wildcard" } }
+  },
+  "$defs": {
+    "defaultSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startup_command": { "type": "string" },
+        "preview_command": { "type": "string" },
+        "windows": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "alias": { "type": "string" },
+        "icon": { "type": "string" },
+        "disable_startup_command": { "type": "boolean" },
+        "startup_command": { "type": "string" },
+        "preview_command": { "type": "string" },
+        "windows": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "path": { "type": "string" },
+        "startup_script": { "type": "string" }
+      }
+    },
+    "wildcard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern"],
+      "properties": {
+        "pattern": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string" },
+        "disable_startup_command": { "type": "boolean" },
+        "startup_command": { "type": "string" },
+        "preview_command": { "type": "string" },
+        "windows": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "frecency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "list_command": { "type": "string" },
+        "query_command": { "type": "string" },
+        "add_command": { "type": "string" }
+      }
+    },
+    "tui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prompt": { "type": "string" },
+        "header": { "type": "string" },
+        "show_icons": { "type": "boolean" },
+        "preview": { "type": "boolean" },
+        "preview_width": { "type": "integer", "minimum": 10, "maximum": 90 },
+        "reverse": { "type": "boolean" }
+      }
+    }
+  }
+}
+

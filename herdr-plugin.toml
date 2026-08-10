@@ -1,0 +1,45 @@
+id = "herdr.sesh"
+name = "Herdr Sesh"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Smart Herdr workspace manager powered by zoxide, inspired by joshmedeski/sesh."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["sh", "scripts/build.sh"]
+
+[[actions]]
+id = "picker"
+title = "Sesh: workspace picker"
+description = "Fuzzy-find active, configured, and recently visited workspaces."
+command = ["./bin/herdr-sesh", "picker"]
+
+[[actions]]
+id = "last"
+title = "Sesh: last workspace"
+description = "Switch to the previously focused workspace."
+command = ["./bin/herdr-sesh", "last"]
+
+[[actions]]
+id = "root"
+title = "Sesh: repository root"
+description = "Create or focus a workspace at the current repository root."
+contexts = ["pane"]
+command = ["./bin/herdr-sesh", "root", "--connect"]
+
+[[panes]]
+id = "picker"
+title = "Sesh"
+description = "Interactive fuzzy workspace picker."
+placement = "popup"
+width = "85%"
+height = "75%"
+command = ["./bin/herdr-sesh", "ui"]
+
+[[events]]
+on = "workspace.focused"
+command = ["./bin/herdr-sesh", "track-focus"]
+
+[[events]]
+on = "workspace.closed"
+command = ["./bin/herdr-sesh", "track-focus"]

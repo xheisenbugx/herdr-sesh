@@ -1,0 +1,47 @@
+# Copy this file to the path printed by `herdr-sesh config-path`.
+# All sections are optional.
+
+dir_length = 1
+git_dir_length = 1
+blacklist = ["scratch"]
+sort_order = ["herdr", "config", "zoxide"]
+
+[default_session]
+startup_command = ""
+preview_command = "eza --all --git --icons=auto --color=always -- {}"
+# windows = ["editor", "git"]
+
+[frecency]
+list_command = "zoxide query --list --score"
+query_command = "zoxide query {}"
+add_command = "zoxide add {}"
+
+[tui]
+prompt = "⚡  "
+show_icons = true
+preview = true
+preview_width = 55
+reverse = true
+
+[[session]]
+name = "herdr-sesh"
+path = "~/code/herdr-sesh"
+alias = "hs"
+icon = "󰆍"
+startup_command = "nvim"
+preview_command = "bat --color=always README.md"
+windows = ["editor", "git"]
+
+[[window]]
+name = "editor"
+startup_script = "nvim"
+
+[[window]]
+name = "git"
+startup_script = "lazygit"
+
+[[wildcard]]
+pattern = "~/work/**"
+startup_command = "nvim"
+preview_command = "eza --all --git --icons=auto --color=always -- {}"
+icon = "󰲋"
