@@ -39,6 +39,13 @@ func pickerLines(service *Service, kinds map[string]bool, writer io.Writer) erro
 	return nil
 }
 
+func pickerFieldArgs() []string {
+	// --with-nth hides the encoded candidate while keeping the displayed name
+	// and path searchable. Combining it with --nth=2.. applies the field range
+	// to the transformed row, which excludes the displayed name from matching.
+	return []string{"--ansi", "--delimiter=\t", "--with-nth=2.."}
+}
+
 func runPickerUI(service *Service, query string) error {
 	if _, err := exec.LookPath("fzf"); err != nil {
 		return errors.New("fzf is required for the interactive picker; install fzf or use `herdr-sesh list` + `herdr-sesh connect`")
@@ -53,7 +60,7 @@ func runPickerUI(service *Service, query string) error {
 	}
 	preview := shellQuote(exe) + " preview --encoded {1}"
 	reload := func(kind string) string { return shellQuote(exe) + " list --picker-lines --source " + kind }
-	args := []string{"--ansi", "--delimiter=\t", "--with-nth=2..", "--nth=2..", "--prompt=" + service.cfg.TUI.Prompt, "--header=" + service.cfg.TUI.Header, "--bind=tab:down,btab:up", "--bind=ctrl-a:reload(" + reload("all") + ")", "--bind=ctrl-w:reload(" + reload("herdr") + ")", "--bind=ctrl-g:reload(" + reload("config") + ")", "--bind=ctrl-z:reload(" + reload("zoxide") + ")", "--bind=ctrl-d:execute(" + shellQuote(exe) + " close --encoded {1})+reload(" + reload("all") + ")"}
+	args := append(pickerFieldArgs(), "--prompt="+service.cfg.TUI.Prompt, "--header="+service.cfg.TUI.Header, "--bind=tab:down,btab:up", "--bind=ctrl-a:reload("+reload("all")+")", "--bind=ctrl-w:reload("+reload("herdr")+")", "--bind=ctrl-g:reload("+reload("config")+")", "--bind=ctrl-z:reload("+reload("zoxide")+")", "--bind=ctrl-d:execute("+shellQuote(exe)+" close --encoded {1})+reload("+reload("all")+")")
 	if query != "" {
 		args = append(args, "--query="+query)
 	}
