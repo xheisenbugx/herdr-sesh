@@ -17,7 +17,8 @@
     "frecency": { "$ref": "#/$defs/frecency" },
     "tui": { "$ref": "#/$defs/tui" },
     "session": { "type": "array", "items": { "$ref": "#/$defs/session" } },
-    "window": { "type": "array", "items": { "$ref": "#/$defs/window" } },
+    "tab": { "type": "array", "items": { "$ref": "#/$defs/tab" } },
+    "window": { "type": "array", "items": { "$ref": "#/$defs/tab" } },
     "wildcard": { "type": "array", "items": { "$ref": "#/$defs/wildcard" } }
   },
   "$defs": {
@@ -27,6 +28,7 @@
       "properties": {
         "startup_command": { "type": "string" },
         "preview_command": { "type": "string" },
+        "tabs": { "type": "array", "items": { "type": "string" } },
         "windows": { "type": "array", "items": { "type": "string" } }
       }
     },
@@ -42,16 +44,18 @@
         "disable_startup_command": { "type": "boolean" },
         "startup_command": { "type": "string" },
         "preview_command": { "type": "string" },
+        "tabs": { "type": "array", "items": { "type": "string" } },
         "windows": { "type": "array", "items": { "type": "string" } }
       }
     },
-    "window": {
+    "tab": {
       "type": "object",
       "additionalProperties": false,
       "required": ["name"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "path": { "type": "string" },
+        "startup_command": { "type": "string" },
         "startup_script": { "type": "string" }
       }
     },
@@ -65,6 +69,7 @@
         "disable_startup_command": { "type": "boolean" },
         "startup_command": { "type": "string" },
         "preview_command": { "type": "string" },
+        "tabs": { "type": "array", "items": { "type": "string" } },
         "windows": { "type": "array", "items": { "type": "string" } }
       }
     },
@@ -91,4 +96,3 @@
     }
   }
 }
-

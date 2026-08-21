@@ -9,7 +9,7 @@ sort_order = ["herdr", "config", "zoxide"]
 [default_session]
 startup_command = ""
 preview_command = "eza --all --git --icons=auto --color=always -- {}"
-# windows = ["editor", "git"]
+# tabs = ["editor", "git"]
 
 [frecency]
 list_command = "zoxide query --list --score"
@@ -30,15 +30,15 @@ alias = "hs"
 icon = "󰆍"
 startup_command = "nvim"
 preview_command = "bat --color=always README.md"
-windows = ["editor", "git"]
+tabs = ["editor", "git"]
 
-[[window]]
+[[tab]]
 name = "editor"
-startup_script = "nvim"
+startup_command = "nvim"
 
-[[window]]
+[[tab]]
 name = "git"
-startup_script = "lazygit"
+startup_command = "lazygit"
 
 [[wildcard]]
 pattern = "~/work/**"
