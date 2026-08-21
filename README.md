@@ -7,6 +7,9 @@ A smart [Herdr](https://herdr.dev) workspace manager inspired by
 and your zoxide history in one fuzzy picker. Select a live workspace to focus it,
 or select a directory to create and focus a workspace rooted there.
 
+<img width="1512" height="808" alt="Screenshot 2026-08-20 at 10 28 57 p m" src="https://github.com/user-attachments/assets/feadf6a0-20ce-463d-95a6-54cb290dcf6d" />
+
+
 ## Features
 
 - Fuzzy picker in a Herdr popup, powered by `fzf`
