@@ -93,7 +93,7 @@ func defaultConfig() Config {
 			AddCommand:   "zoxide add {}",
 		},
 		TUI: TUIConfig{
-			Prompt: "⚡  ", Header: "enter open/create • ctrl-a all • ctrl-w active • ctrl-g config • ctrl-z zoxide • ctrl-d close",
+			Prompt: "⚡  ", Header: "ctrl-a all • ctrl-w active • ctrl-g config • ctrl-z zoxide • ctrl-d close",
 			ShowIcons: &show, Preview: &preview, PreviewWidth: 55, Reverse: &reverse,
 		},
 	}
