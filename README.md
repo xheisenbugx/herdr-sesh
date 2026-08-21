@@ -15,7 +15,7 @@ or select a directory to create and focus a workspace rooted there.
 - Create-or-focus behavior: Enter focuses an existing workspace or creates it
 - Smart names from a Git remote/repository, with directory fallback
 - Global, per-session, and wildcard startup and preview commands
-- Reusable window layouts, translated to native Herdr tabs
+- Reusable native Herdr tab layouts
 - Session aliases, custom icons, source sorting, blacklist, and JSON output
 - Custom frecency backends (`fasd`, `autojump`, `memy`, and similar tools)
 - `clone`, `mkdir`, `last`, repository `root`, `rename --enrich`, and tab management
@@ -110,15 +110,15 @@ path = "~/code/api"
 alias = "a"
 startup_command = "nvim"
 preview_command = "bat --color=always README.md"
-windows = ["editor", "git"]
+tabs = ["editor", "git"]
 
-[[window]]
+[[tab]]
 name = "editor"
-startup_script = "nvim"
+startup_command = "nvim"
 
-[[window]]
+[[tab]]
 name = "git"
-startup_script = "lazygit"
+startup_command = "lazygit"
 
 [[wildcard]]
 pattern = "~/work/**"
@@ -130,6 +130,13 @@ preview_command = "eza --all --git --icons=auto --color=always -- {}"
 workspace path. A per-session command wins over a wildcard command, which wins
 over `[default_session]`. Set `disable_startup_command = true` on a session or
 wildcard to suppress the default.
+
+Use `tabs = ["editor", "git"]` with `[[tab]]` definitions for multi-tab Herdr
+workspaces. Each tab's `startup_command` runs in that tab. The session startup
+command overrides the first tab's reusable command, so a session can customize
+what its editor opens while other tabs retain their shared commands.
+The older `windows`, `[[window]]`, and `startup_script` spellings remain accepted
+for compatibility.
 
 ### Wildcards
 
@@ -148,7 +155,7 @@ strict_mode = true
 ```
 
 Imports are loaded first and the current file overrides scalar settings. Session,
-window, wildcard, and blacklist arrays are appended. Strict mode rejects unknown
+tab, wildcard, and blacklist arrays are appended. Strict mode rejects unknown
 keys.
 
 ### Custom frecency backend
@@ -208,7 +215,7 @@ tmux concepts to Herdr's model:
 | `sesh window`                                    | `herdr-sesh tab` (also aliased as `window`)             |
 | `sesh last`                                      | `herdr-sesh last`, backed by `workspace.focused` events |
 | `sesh root`, `mkdir`, `clone`, `rename --enrich` | same command names                                      |
-| tmuxinator/tmuxp                                 | reusable `[[window]]` tab layouts                       |
+| tmuxinator/tmuxp                                 | reusable `[[tab]]` layouts                              |
 | tmux worktree sessions                           | Herdr's native `herdr worktree` commands                |
 
 Herdr already owns features that sesh has to build around tmux—persistent

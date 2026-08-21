@@ -77,3 +77,61 @@ func TestStrictConfigRejectsUnknownKeys(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestLoadConfigUsesHerdrTabTerminology(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sesh.toml")
+	data := `
+[[session]]
+name = "tmux config"
+path = "~/.config/tmux"
+tabs = ["editor", "git"]
+
+[[tab]]
+name = "editor"
+startup_command = "nvim"
+
+[[tab]]
+name = "git"
+startup_command = "lazygit"
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Sessions) != 1 || len(cfg.Sessions[0].Tabs) != 2 {
+		t.Fatalf("session tabs = %+v", cfg.Sessions)
+	}
+	if len(cfg.Tabs) != 2 || cfg.Tabs[0].StartupCommand != "nvim" || cfg.Tabs[1].StartupCommand != "lazygit" {
+		t.Fatalf("tab definitions = %+v", cfg.Tabs)
+	}
+}
+
+func TestLoadConfigKeepsLegacyWindowAliases(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sesh.toml")
+	data := `
+[[session]]
+name = "legacy"
+path = "/tmp"
+windows = ["editor"]
+
+[[window]]
+name = "editor"
+startup_script = "nvim"
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := loadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Sessions[0].Tabs) != 1 || cfg.Sessions[0].Tabs[0] != "editor" {
+		t.Fatalf("legacy session tabs = %+v", cfg.Sessions[0].Tabs)
+	}
+	if len(cfg.Tabs) != 1 || cfg.Tabs[0].StartupCommand != "nvim" {
+		t.Fatalf("legacy tab = %+v", cfg.Tabs)
+	}
+}

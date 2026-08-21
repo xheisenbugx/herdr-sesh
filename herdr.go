@@ -163,12 +163,5 @@ func (c *HerdrClient) PaneRead(id string, lines int) (string, error) {
 	return out.Read.Text, err
 }
 func (c *HerdrClient) PaneRun(id, command string) error {
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if text, err := c.PaneRead(id, 5); err == nil && len(text) > 0 {
-			break
-		}
-		time.Sleep(40 * time.Millisecond)
-	}
 	return c.call("pane.send_input", map[string]any{"pane_id": id, "text": command, "keys": []string{"Enter"}}, nil)
 }

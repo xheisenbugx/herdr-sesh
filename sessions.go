@@ -117,7 +117,7 @@ func (s *Service) configCandidates() ([]Candidate, error) {
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, Candidate{Kind: "config", Name: sc.Name, Path: p, Alias: sc.Alias, Icon: sc.Icon, Windows: sc.Windows, StartupCommand: sc.StartupCommand, PreviewCommand: sc.PreviewCommand, DisableStartup: sc.DisableStartupCommand})
+		result = append(result, Candidate{Kind: "config", Name: sc.Name, Path: p, Alias: sc.Alias, Icon: sc.Icon, Tabs: sc.Tabs, StartupCommand: sc.StartupCommand, PreviewCommand: sc.PreviewCommand, DisableStartup: sc.DisableStartupCommand})
 	}
 	return result, nil
 }
@@ -133,7 +133,7 @@ func (s *Service) enrich(c *Candidate) {
 			if sc.Icon != "" {
 				c.Icon = sc.Icon
 			}
-			c.Windows = sc.Windows
+			c.Tabs = sc.Tabs
 			c.StartupCommand = sc.StartupCommand
 			c.PreviewCommand = sc.PreviewCommand
 			c.DisableStartup = sc.DisableStartupCommand
@@ -147,7 +147,7 @@ func (s *Service) enrich(c *Candidate) {
 		if wc.Icon != "" {
 			c.Icon = wc.Icon
 		}
-		c.Windows = wc.Windows
+		c.Tabs = wc.Tabs
 		c.StartupCommand = wc.StartupCommand
 		c.PreviewCommand = wc.PreviewCommand
 		c.DisableStartup = wc.DisableStartupCommand
@@ -262,14 +262,9 @@ func (s *Service) Connect(c Candidate, command string) (Workspace, error) {
 		return Workspace{}, err
 	}
 	recordTransition(snap.FocusedWorkspaceID, w.ID)
-	windows := c.Windows
-	if len(windows) == 0 {
-		windows = s.cfg.DefaultSession.Windows
-	}
-	if len(windows) > 0 {
-		if err := s.applyWindows(w, tab, pane, windows); err != nil {
-			return w, err
-		}
+	tabs := c.Tabs
+	if len(tabs) == 0 {
+		tabs = s.cfg.DefaultSession.Tabs
 	}
 	startup := command
 	if startup == "" && !c.DisableStartup {
@@ -278,7 +273,11 @@ func (s *Service) Connect(c Candidate, command string) (Workspace, error) {
 			startup = s.cfg.DefaultSession.StartupCommand
 		}
 	}
-	if startup != "" {
+	if len(tabs) > 0 {
+		if err := s.applyTabs(w, tab, pane, tabs, startup); err != nil {
+			return w, err
+		}
+	} else if startup != "" {
 		if err := s.client.PaneRun(pane.ID, replaceBraces(startup, c.Path)); err != nil {
 			return w, err
 		}
@@ -287,9 +286,9 @@ func (s *Service) Connect(c Candidate, command string) (Workspace, error) {
 	return w, nil
 }
 
-func (s *Service) applyWindows(w Workspace, rootTab Tab, rootPane Pane, names []string) error {
-	defs := map[string]WindowConfig{}
-	for _, v := range s.cfg.Windows {
+func (s *Service) applyTabs(w Workspace, rootTab Tab, rootPane Pane, names []string, sessionStartup string) error {
+	defs := map[string]TabConfig{}
+	for _, v := range s.cfg.Tabs {
 		defs[v.Name] = v
 	}
 	for i, name := range names {
@@ -310,7 +309,12 @@ func (s *Service) applyWindows(w Workspace, rootTab Tab, rootPane Pane, names []
 				return err
 			}
 		}
-		startup := def.StartupScript
+		startup := def.StartupCommand
+		if i == 0 && sessionStartup != "" {
+			// The selected session is more specific than a reusable tab
+			// definition, so its startup command owns the root tab.
+			startup = sessionStartup
+		}
 		if i == 0 && !samePath(path, rootPane.CWD) {
 			changeDir := "cd " + shellQuote(path)
 			if startup == "" {
@@ -351,7 +355,9 @@ func (s *Service) Preview(c Candidate) (string, error) {
 		cmd = s.cfg.DefaultSession.PreviewCommand
 	}
 	if cmd != "" {
-		out, err := shellCommand(replaceBraces(cmd, c.Path)).CombinedOutput()
+		command := shellCommand(replaceBraces(cmd, c.Path))
+		command.Dir = c.Path
+		out, err := command.CombinedOutput()
 		if err != nil {
 			return string(out), err
 		}

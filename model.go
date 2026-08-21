@@ -22,7 +22,7 @@ type Candidate struct {
 	Alias          string   `json:"alias,omitempty"`
 	Icon           string   `json:"icon,omitempty"`
 	Score          float64  `json:"score,omitempty"`
-	Windows        []string `json:"-"`
+	Tabs           []string `json:"-"`
 	StartupCommand string   `json:"-"`
 	PreviewCommand string   `json:"-"`
 	DisableStartup bool     `json:"-"`

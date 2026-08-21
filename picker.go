@@ -14,7 +14,13 @@ import (
 )
 
 func encodeCandidate(c Candidate) string {
-	data, _ := json.Marshal(c)
+	data, _ := json.Marshal(struct {
+		Candidate
+		Tabs           []string `json:"tabs,omitempty"`
+		StartupCommand string   `json:"startup_command,omitempty"`
+		PreviewCommand string   `json:"preview_command,omitempty"`
+		DisableStartup bool     `json:"disable_startup,omitempty"`
+	}{c, c.Tabs, c.StartupCommand, c.PreviewCommand, c.DisableStartup})
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 func decodeCandidate(value string) (Candidate, error) {
@@ -22,9 +28,19 @@ func decodeCandidate(value string) (Candidate, error) {
 	if err != nil {
 		return Candidate{}, err
 	}
-	var c Candidate
-	err = json.Unmarshal(data, &c)
-	return c, err
+	var wire struct {
+		Candidate
+		Tabs           []string `json:"tabs,omitempty"`
+		StartupCommand string   `json:"startup_command,omitempty"`
+		PreviewCommand string   `json:"preview_command,omitempty"`
+		DisableStartup bool     `json:"disable_startup,omitempty"`
+	}
+	err = json.Unmarshal(data, &wire)
+	wire.Candidate.Tabs = wire.Tabs
+	wire.Candidate.StartupCommand = wire.StartupCommand
+	wire.Candidate.PreviewCommand = wire.PreviewCommand
+	wire.Candidate.DisableStartup = wire.DisableStartup
+	return wire.Candidate, err
 }
 
 func pickerLines(service *Service, kinds map[string]bool, writer io.Writer) error {

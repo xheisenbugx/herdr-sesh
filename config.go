@@ -19,7 +19,8 @@ type Config struct {
 	Blacklist          []string             `toml:"blacklist"`
 	Sessions           []SessionConfig      `toml:"session"`
 	SortOrder          []string             `toml:"sort_order"`
-	Windows            []WindowConfig       `toml:"window"`
+	Tabs               []TabConfig          `toml:"tab"`
+	LegacyWindows      []TabConfig          `toml:"window"`
 	Wildcards          []WildcardConfig     `toml:"wildcard"`
 	DirLength          int                  `toml:"dir_length"`
 	GitDirLength       int                  `toml:"git_dir_length"`
@@ -32,7 +33,8 @@ type Config struct {
 type DefaultSessionConfig struct {
 	StartupCommand string   `toml:"startup_command"`
 	PreviewCommand string   `toml:"preview_command"`
-	Windows        []string `toml:"windows"`
+	Tabs           []string `toml:"tabs"`
+	LegacyWindows  []string `toml:"windows"`
 }
 
 type SessionConfig struct {
@@ -43,13 +45,15 @@ type SessionConfig struct {
 	DisableStartupCommand bool     `toml:"disable_startup_command"`
 	StartupCommand        string   `toml:"startup_command"`
 	PreviewCommand        string   `toml:"preview_command"`
-	Windows               []string `toml:"windows"`
+	Tabs                  []string `toml:"tabs"`
+	LegacyWindows         []string `toml:"windows"`
 }
 
-type WindowConfig struct {
-	Name          string `toml:"name"`
-	Path          string `toml:"path"`
-	StartupScript string `toml:"startup_script"`
+type TabConfig struct {
+	Name                string `toml:"name"`
+	Path                string `toml:"path"`
+	StartupCommand      string `toml:"startup_command"`
+	LegacyStartupScript string `toml:"startup_script"`
 }
 
 type WildcardConfig struct {
@@ -58,7 +62,8 @@ type WildcardConfig struct {
 	DisableStartupCommand bool     `toml:"disable_startup_command"`
 	StartupCommand        string   `toml:"startup_command"`
 	PreviewCommand        string   `toml:"preview_command"`
-	Windows               []string `toml:"windows"`
+	Tabs                  []string `toml:"tabs"`
+	LegacyWindows         []string `toml:"windows"`
 }
 
 type FrecencyConfig struct {
@@ -200,12 +205,27 @@ func mergeConfig(dst *Config, src Config) {
 	if src.DefaultSession.PreviewCommand != "" {
 		dst.DefaultSession.PreviewCommand = src.DefaultSession.PreviewCommand
 	}
-	if src.DefaultSession.Windows != nil {
-		dst.DefaultSession.Windows = src.DefaultSession.Windows
+	if tabs := configuredTabs(src.DefaultSession.Tabs, src.DefaultSession.LegacyWindows); tabs != nil {
+		dst.DefaultSession.Tabs = tabs
 	}
 	dst.Blacklist = append(dst.Blacklist, src.Blacklist...)
+	for i := range src.Sessions {
+		src.Sessions[i].Tabs = configuredTabs(src.Sessions[i].Tabs, src.Sessions[i].LegacyWindows)
+		src.Sessions[i].LegacyWindows = nil
+	}
 	dst.Sessions = append(dst.Sessions, src.Sessions...)
-	dst.Windows = append(dst.Windows, src.Windows...)
+	for i := range src.Tabs {
+		normalizeTabConfig(&src.Tabs[i])
+	}
+	for i := range src.LegacyWindows {
+		normalizeTabConfig(&src.LegacyWindows[i])
+	}
+	dst.Tabs = append(dst.Tabs, src.Tabs...)
+	dst.Tabs = append(dst.Tabs, src.LegacyWindows...)
+	for i := range src.Wildcards {
+		src.Wildcards[i].Tabs = configuredTabs(src.Wildcards[i].Tabs, src.Wildcards[i].LegacyWindows)
+		src.Wildcards[i].LegacyWindows = nil
+	}
 	dst.Wildcards = append(dst.Wildcards, src.Wildcards...)
 	if src.SortOrder != nil {
 		dst.SortOrder = src.SortOrder
@@ -251,6 +271,20 @@ func mergeConfig(dst *Config, src Config) {
 	}
 }
 
+func configuredTabs(tabs, windows []string) []string {
+	if tabs != nil {
+		return tabs
+	}
+	return windows
+}
+
+func normalizeTabConfig(tab *TabConfig) {
+	if tab.StartupCommand == "" {
+		tab.StartupCommand = tab.LegacyStartupScript
+	}
+	tab.LegacyStartupScript = ""
+}
+
 func validateConfig(cfg Config) error {
 	aliases := map[string]string{}
 	names := map[string]bool{}
@@ -270,21 +304,27 @@ func validateConfig(cfg Config) error {
 			aliases[key] = s.Name
 		}
 	}
-	windowNames := map[string]bool{}
-	for _, w := range cfg.Windows {
-		windowNames[w.Name] = true
+	tabNames := map[string]bool{}
+	for _, tab := range cfg.Tabs {
+		if strings.TrimSpace(tab.Name) == "" {
+			return fmt.Errorf("tab requires name")
+		}
+		if tabNames[tab.Name] {
+			return fmt.Errorf("duplicate tab name %q", tab.Name)
+		}
+		tabNames[tab.Name] = true
 	}
 	for _, s := range cfg.Sessions {
-		for _, w := range s.Windows {
-			if !windowNames[w] {
-				return fmt.Errorf("session %q references unknown window %q", s.Name, w)
+		for _, tab := range s.Tabs {
+			if !tabNames[tab] {
+				return fmt.Errorf("session %q references unknown tab %q", s.Name, tab)
 			}
 		}
 	}
 	for _, w := range cfg.Wildcards {
-		for _, n := range w.Windows {
-			if !windowNames[n] {
-				return fmt.Errorf("wildcard %q references unknown window %q", w.Pattern, n)
+		for _, name := range w.Tabs {
+			if !tabNames[name] {
+				return fmt.Errorf("wildcard %q references unknown tab %q", w.Pattern, name)
 			}
 		}
 	}

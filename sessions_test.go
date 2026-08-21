@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -34,13 +38,110 @@ func TestDedupePrefersActiveCandidate(t *testing.T) {
 }
 
 func TestCandidateEncodingRoundTrip(t *testing.T) {
-	want := Candidate{Kind: "config", Name: "a name with spaces", Path: "/tmp/project x", Alias: "px"}
+	want := Candidate{
+		Kind: "config", Name: "a name with spaces", Path: "/tmp/project x", Alias: "px",
+		Tabs: []string{"editor", "git"}, StartupCommand: "nvim",
+		PreviewCommand: "bat --color=always README.md", DisableStartup: true,
+	}
 	got, err := decodeCandidate(encodeCandidate(want))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestConfiguredPreviewRunsFromSessionDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "preview.txt"), []byte("session preview\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := decodeCandidate(encodeCandidate(Candidate{
+		Kind: "config", Path: dir, PreviewCommand: "cat preview.txt",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := (&Service{}).Preview(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "session preview\n" {
+		t.Fatalf("preview = %q", out)
+	}
+}
+
+func TestConnectFromPickerCreatesConfiguredTabsAndRunsCommands(t *testing.T) {
+	dir := t.TempDir()
+	sessionStartup := "nvim ~/.config/tmux/tmux.conf"
+	var mu sync.Mutex
+	var methods []string
+	var sent []string
+	client := &HerdrClient{dial: func() (net.Conn, error) {
+		clientConn, serverConn := net.Pipe()
+		go func(conn net.Conn) {
+			defer conn.Close()
+			var req struct {
+				Method string         `json:"method"`
+				Params map[string]any `json:"params"`
+			}
+			_ = json.NewDecoder(bufio.NewReader(conn)).Decode(&req)
+			mu.Lock()
+			methods = append(methods, req.Method)
+			if req.Method == "pane.send_input" {
+				sent = append(sent, req.Params["text"].(string))
+			}
+			mu.Unlock()
+			var result any = map[string]any{"type": "ok"}
+			switch req.Method {
+			case "session.snapshot":
+				result = map[string]any{"snapshot": map[string]any{"workspaces": []any{}, "tabs": []any{}, "panes": []any{}}}
+			case "workspace.create":
+				result = map[string]any{
+					"workspace": map[string]any{"workspace_id": "w1", "label": "tmux config"},
+					"tab":       map[string]any{"tab_id": "t1", "workspace_id": "w1"},
+					"root_pane": map[string]any{"pane_id": "p1", "workspace_id": "w1", "tab_id": "t1", "cwd": dir},
+				}
+			case "tab.create":
+				result = map[string]any{
+					"tab":       map[string]any{"tab_id": "t2", "workspace_id": "w1"},
+					"root_pane": map[string]any{"pane_id": "p2", "workspace_id": "w1", "tab_id": "t2", "cwd": dir},
+				}
+			}
+			_ = json.NewEncoder(conn).Encode(map[string]any{"id": "x", "result": result})
+		}(serverConn)
+		return clientConn, nil
+	}}
+	s := &Service{
+		cfg: Config{Tabs: []TabConfig{
+			{Name: "editor", StartupCommand: "nvim"},
+			{Name: "git", StartupCommand: "lazygit"},
+		}},
+		client: client,
+	}
+	candidate, err := decodeCandidate(encodeCandidate(Candidate{
+		Kind: "config", Name: "tmux config", Path: dir,
+		Tabs: []string{"editor", "git"}, StartupCommand: sessionStartup,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Connect(candidate, ""); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(sent, []string{sessionStartup, "lazygit"}) {
+		t.Fatalf("commands = %q", sent)
+	}
+	if got := strings.Join(methods, ","); !strings.Contains(got, "tab.rename") || !strings.Contains(got, "tab.create") {
+		t.Fatalf("methods = %v", methods)
+	}
+	for _, method := range methods {
+		if method == "pane.read" {
+			t.Fatalf("command launch polled pane output: methods = %v", methods)
+		}
 	}
 }
 
