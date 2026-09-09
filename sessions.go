@@ -278,7 +278,13 @@ func (s *Service) Connect(c Candidate, command string) (Workspace, error) {
 		// separate checkouts and monorepo subdirectories must stay selectable.
 		match := c.WorkspaceID != "" && w.ID == c.WorkspaceID
 		if c.WorkspaceID == "" {
-			match = workspaceHasPath(snap, w.ID, c.Path) || (c.Kind == "config" && strings.EqualFold(w.Label, c.Name))
+			if c.Kind == "config" {
+				// A named session owns its startup commands and tabs. Another
+				// workspace merely visiting its directory is not that session.
+				match = strings.EqualFold(w.Label, c.Name)
+			} else {
+				match = workspaceHasPath(snap, w.ID, c.Path)
+			}
 		}
 		if match {
 			recordTransition(snap.FocusedWorkspaceID, w.ID)

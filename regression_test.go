@@ -142,6 +142,73 @@ func TestExplicitDirectoryPreviewDoesNotListHerdrOrFrecency(t *testing.T) {
 	}
 }
 
+func TestConnectConfiguredSessionIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		kind       string
+		workspace  string
+		existing   bool
+		foreground bool
+		want       string
+	}{
+		{name: "create despite matching cwd", kind: "config", want: "new"},
+		{name: "create despite matching foreground cwd", kind: "config", foreground: true, want: "new"},
+		{name: "reuse named session after its cwd changes", kind: "config", existing: true, want: "configured"},
+		{name: "directory still reuses path", kind: "zoxide", want: "other"},
+		{name: "explicit workspace takes precedence", kind: "config", workspace: "other", existing: true, want: "other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+			dir := t.TempDir()
+			snap := Snapshot{
+				FocusedWorkspaceID: "other",
+				Workspaces:         []Workspace{{ID: "other", Label: "webapp/backend"}},
+				Panes:              []Pane{{WorkspaceID: "other", CWD: dir}},
+			}
+			if tc.foreground {
+				snap.Panes[0].CWD = filepath.Join(dir, "backend")
+				snap.Panes[0].ForegroundCWD = dir
+			}
+			if tc.existing {
+				snap.Workspaces = append(snap.Workspaces, Workspace{ID: "configured", Label: "Herdr Sesh Config"})
+				snap.Panes = append(snap.Panes, Pane{WorkspaceID: "configured", CWD: filepath.Join(dir, "elsewhere")})
+			}
+			var focused string
+			var created bool
+			client := testClient(func(method string, params map[string]any) (any, *herdrError) {
+				switch method {
+				case "session.snapshot":
+					return map[string]any{"snapshot": snap}, nil
+				case "workspace.focus":
+					focused = params["workspace_id"].(string)
+					return map[string]any{}, nil
+				case "workspace.create":
+					created = true
+					if params["cwd"] != dir || params["label"] != "herdr sesh config" {
+						t.Errorf("workspace creation = %+v", params)
+					}
+					return map[string]any{"workspace": Workspace{ID: "new"}, "root_pane": Pane{CWD: dir}}, nil
+				default:
+					return nil, &herdrError{Message: "unexpected " + method}
+				}
+			})
+			s := &Service{client: client, cfg: defaultConfig()}
+			s.cfg.Frecency.AddCommand = "/usr/bin/true"
+			w, err := s.Connect(Candidate{Kind: tc.kind, Name: "herdr sesh config", Path: dir, WorkspaceID: tc.workspace}, "")
+			if err != nil || w.ID != tc.want {
+				t.Fatalf("connect = %+v, %v; want %s", w, err, tc.want)
+			}
+			if tc.want == "new" {
+				if !created || focused != "" {
+					t.Fatalf("created = %v, focused = %q", created, focused)
+				}
+			} else if created || focused != tc.want {
+				t.Fatalf("created = %v, focused = %q; want focus %q", created, focused, tc.want)
+			}
+		})
+	}
+}
+
 func TestWorkspacePreviewOrdersPanesPreservesANSIAndSkipsPicker(t *testing.T) {
 	t.Setenv("HERDR_SESH_PICKER_PANE", "picker")
 	var mu sync.Mutex

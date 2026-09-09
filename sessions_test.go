@@ -73,6 +73,7 @@ func TestConfiguredPreviewRunsFromSessionDirectory(t *testing.T) {
 }
 
 func TestConnectFromPickerCreatesConfiguredTabsAndRunsCommands(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	dir := t.TempDir()
 	sessionStartup := "nvim ~/.config/tmux/tmux.conf"
 	var mu sync.Mutex
@@ -96,7 +97,11 @@ func TestConnectFromPickerCreatesConfiguredTabsAndRunsCommands(t *testing.T) {
 			var result any = map[string]any{"type": "ok"}
 			switch req.Method {
 			case "session.snapshot":
-				result = map[string]any{"snapshot": map[string]any{"workspaces": []any{}, "tabs": []any{}, "panes": []any{}}}
+				result = map[string]any{"snapshot": Snapshot{
+					FocusedWorkspaceID: "other",
+					Workspaces:         []Workspace{{ID: "other", Label: "webapp/backend"}},
+					Panes:              []Pane{{WorkspaceID: "other", CWD: dir}},
+				}}
 			case "workspace.create":
 				result = map[string]any{
 					"workspace": map[string]any{"workspace_id": "w1", "label": "tmux config"},
