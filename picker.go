@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -49,17 +50,38 @@ func pickerLines(service *Service, kinds map[string]bool, writer io.Writer) erro
 		return err
 	}
 	show := service.cfg.TUI.ShowIcons == nil || *service.cfg.TUI.ShowIcons
+	buffered := bufio.NewWriter(writer)
 	for _, c := range list {
-		fmt.Fprintf(writer, "%s\t%s\t%s\n", encodeCandidate(c), c.displayName(show), c.Path)
+		path := shortPath(c.Path)
+		if c.Name == path {
+			path = "" // Directory names already display the full path.
+		}
+		if _, err := fmt.Fprintf(buffered, "%s\t%s\t%s\n", encodeCandidate(c), pickerText(c.displayName(show)), pickerText(path)); err != nil {
+			return err
+		}
 	}
-	return nil
+	return buffered.Flush()
+}
+
+var pickerTextReplacer = strings.NewReplacer("\t", `\t`, "\n", `\n`, "\r", `\r`)
+
+func pickerText(value string) string {
+	return pickerTextReplacer.Replace(value)
+}
+
+func (s *Service) pickerCommand(exe string) string {
+	command := shellQuote(exe)
+	if s.configFile != "" {
+		command += " --config " + shellQuote(s.configFile)
+	}
+	return command
 }
 
 func pickerFieldArgs() []string {
 	// --with-nth hides the encoded candidate while keeping the displayed name
 	// and path searchable. Combining it with --nth=2.. applies the field range
 	// to the transformed row, which excludes the displayed name from matching.
-	return []string{"--ansi", "--delimiter=\t", "--with-nth=2.."}
+	return []string{"--ansi", "--delimiter=\t", "--with-nth=2..", "--no-sort"}
 }
 
 func runPickerUI(service *Service, query string) error {
@@ -74,9 +96,10 @@ func runPickerUI(service *Service, query string) error {
 	if err := pickerLines(service, map[string]bool{}, &input); err != nil {
 		return err
 	}
-	preview := shellQuote(exe) + " preview --encoded {1}"
-	reload := func(kind string) string { return shellQuote(exe) + " list --picker-lines --source " + kind }
-	args := append(pickerFieldArgs(), "--prompt="+service.cfg.TUI.Prompt, "--header="+service.cfg.TUI.Header, "--bind=tab:down,btab:up", "--bind=ctrl-a:reload("+reload("all")+")", "--bind=ctrl-w:reload("+reload("herdr")+")", "--bind=ctrl-g:reload("+reload("config")+")", "--bind=ctrl-z:reload("+reload("zoxide")+")", "--bind=ctrl-d:execute("+shellQuote(exe)+" close --encoded {1})+reload("+reload("all")+")")
+	command := service.pickerCommand(exe)
+	preview := command + " preview --encoded {1}"
+	reload := func(kind string) string { return command + " list --picker-lines --source " + kind }
+	args := append(pickerFieldArgs(), "--prompt="+service.cfg.TUI.Prompt, "--header="+service.cfg.TUI.Header, "--bind=tab:down,btab:up", "--bind=ctrl-a:reload("+reload("all")+")", "--bind=ctrl-w:reload("+reload("herdr")+")", "--bind=ctrl-g:reload("+reload("config")+")", "--bind=ctrl-z:reload("+reload("zoxide")+")", "--bind=ctrl-d:execute("+command+" close --encoded {1})+reload("+reload("all")+")")
 	if query != "" {
 		args = append(args, "--query="+query)
 	}
@@ -84,9 +107,10 @@ func runPickerUI(service *Service, query string) error {
 		args = append(args, "--layout=reverse")
 	}
 	if service.cfg.TUI.Preview == nil || *service.cfg.TUI.Preview {
-		args = append(args, "--preview="+preview, "--preview-window=right:"+strconv.Itoa(service.cfg.TUI.PreviewWidth)+"%")
+		args = append(args, "--preview="+preview, "--preview-window=right:"+strconv.Itoa(service.cfg.TUI.PreviewWidth)+"%:wrap")
 	}
 	cmd := exec.Command("fzf", args...)
+	cmd.Env = append(os.Environ(), "HERDR_SESH_PICKER_PANE="+os.Getenv("HERDR_PANE_ID"))
 	cmd.Stdin = &input
 	cmd.Stderr = os.Stderr
 	var selected bytes.Buffer

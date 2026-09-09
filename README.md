@@ -14,7 +14,8 @@ or select a directory to create and focus a workspace rooted there.
 
 - Fuzzy picker in a Herdr popup, powered by `fzf`
 - Active Herdr workspaces, configured sessions, and zoxide directories in one list
-- Duplicate paths, repository subdirectories, and repeated display names collapsed automatically
+- Full zoxide paths at every depth, in the same order as `sesh list -z`
+- Exact-path deduplication across sources, preserving nested directories and distinct live workspaces
 - Create-or-focus behavior: Enter focuses an existing workspace or creates it
 - Smart names from a Git remote/repository, with directory fallback
 - Global, per-session, and wildcard startup and preview commands
@@ -86,6 +87,22 @@ The main action opens an 85% by 75% popup. Its default controls are:
 The preview shows recent output from every pane in a live workspace. For a
 directory it runs the matching `preview_command`, then the default preview
 command, then falls back to `eza`, `lsd`, `tree`, or a plain directory listing.
+Live previews put the active tab first, retain terminal colors, and exclude the
+picker's own pane. Pane reads run concurrently (up to four at a time) with socket
+deadlines; a closed pane does not prevent the others from appearing. If an
+optional directory preview tool fails, the next available tool is tried.
+Directory listings use one entry per line, and the preview wraps long lines to
+keep filenames and configured file previews readable in narrow popups.
+
+Zoxide entries display their full paths with `~` for your home directory. They
+are never collapsed to Git roots or removed because two directories have the
+same basename. The combined list hides only zoxide paths already represented by
+an active or configured workspace; `Ctrl+Z` shows the complete zoxide source
+(subject to your blacklist). Search preserves source/frecency order. Selecting
+a nested directory opens that exact directory, with a workspace name such as
+`repo/services/api`.
+
+An explicit `--config` is preserved by the popup, source reloads, and previews.
 
 ## Configuration
 
@@ -173,9 +190,12 @@ add_command = "zoxide add {}"
 ```
 
 Simple commands run directly for minimum startup latency. Commands containing
-shell operators automatically use `/bin/sh -lc`, so alternative backends may
-still use pipelines when needed. List output is one path per line; a leading
-numeric score is recognized automatically.
+shell operators or expansions use `/bin/sh -c`, so alternative backends may
+still use pipelines when needed. Preview commands also use `/bin/sh -c` and
+inherit Herdr's environment without loading shell login profiles. List output is
+one literal path per line; a leading numeric score is recognized automatically.
+Paths and backend ordering are preserved, including directories containing `$`
+or spaces. No filesystem crawl, depth limit, or Git lookup is applied to the list.
 
 ## CLI
 
@@ -201,6 +221,8 @@ herdr-sesh completion <bash|zsh|fish|powershell>
 Commands that talk to Herdr require `HERDR_SOCKET_PATH`; Herdr injects it into
 plugin actions and panes automatically. When calling the binary from an ordinary
 shell, export the socket path or run the equivalent plugin action.
+Directory previews and `list --source zoxide` / `list --source config` also work
+without a Herdr socket.
 
 ## Sesh compatibility map
 
@@ -232,6 +254,7 @@ opening.
 
 ```sh
 go test ./...
+go test -race ./...
 go vet ./...
 ./scripts/build.sh
 herdr plugin link "$PWD"
@@ -241,6 +264,22 @@ herdr plugin action invoke herdr.sesh.picker
 The plugin communicates with Herdr through its newline-delimited JSON socket API.
 Protocol tests use in-memory connections and do not require a running Herdr
 server.
+
+To compare directory coverage and warmed CLI latency with the installed sesh
+and zoxide, run this inside Herdr (Python 3 required):
+
+```sh
+python3 scripts/benchmark.py --runs 20
+# Optionally compare an older binary saved before rebuilding:
+python3 scripts/benchmark.py --before /tmp/herdr-sesh-before --runs 20
+go test -run '^$' -bench . -benchmem
+```
+
+The CLI benchmark runs only listing and preview commands. Zoxide queries may
+perform their normal database housekeeping. Timing includes process startup;
+the Go benchmark isolates directory naming and deduplication. No directory list
+is cached between commands, so newly visited paths appear on the next reload.
+See [PERFORMANCE.md](PERFORMANCE.md) for the measured comparison and validation.
 
 ## License
 

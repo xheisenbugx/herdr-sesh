@@ -1,6 +1,24 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+func shortPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if path == home {
+			return "~"
+		}
+		if strings.HasPrefix(path, home+string(filepath.Separator)) {
+			return "~" + strings.TrimPrefix(path, home)
+		}
+	}
+	return path
+}
 
 type sourceGlyph struct {
 	icon  string

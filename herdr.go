@@ -15,6 +15,7 @@ type HerdrClient struct {
 	socketPath string
 	dial       func() (net.Conn, error)
 	sequence   atomic.Uint64
+	timeout    time.Duration
 }
 
 type herdrRequest struct {
@@ -40,17 +41,30 @@ func newHerdrClient() (*HerdrClient, error) {
 }
 
 func (c *HerdrClient) call(method string, params, out any) error {
+	if c == nil || (c.dial == nil && c.socketPath == "") {
+		return errors.New("HERDR_SOCKET_PATH is not set; run this through Herdr or set it explicitly")
+	}
+	timeout := c.timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+		if method == "session.snapshot" || method == "pane.read" {
+			timeout = 2 * time.Second
+		}
+	}
 	var conn net.Conn
 	var err error
 	if c.dial != nil {
 		conn, err = c.dial()
 	} else {
-		conn, err = net.DialTimeout("unix", c.socketPath, 2*time.Second)
+		conn, err = net.DialTimeout("unix", c.socketPath, timeout)
 	}
 	if err != nil {
 		return fmt.Errorf("connect to Herdr: %w", err)
 	}
 	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
 	id := fmt.Sprintf("herdr-sesh-%d", c.sequence.Add(1))
 	if err := json.NewEncoder(conn).Encode(herdrRequest{ID: id, Method: method, Params: params}); err != nil {
 		return err
@@ -128,7 +142,11 @@ func (c *HerdrClient) WorkspaceClose(id string) error {
 func (c *HerdrClient) WorkspaceRename(id, label string) error {
 	return c.call("workspace.rename", map[string]any{"workspace_id": id, "label": label}, nil)
 }
-func (c *HerdrClient) OpenPickerPopup() error {
+func (c *HerdrClient) OpenPickerPopup(configFile ...string) error {
+	env := map[string]string{}
+	if len(configFile) > 0 && configFile[0] != "" {
+		env["HERDR_SESH_CONFIG"] = configFile[0]
+	}
 	return c.call("plugin.pane.open", map[string]any{
 		"plugin_id":  "herdr.sesh",
 		"entrypoint": "picker",
@@ -136,7 +154,7 @@ func (c *HerdrClient) OpenPickerPopup() error {
 		"width":      "85%",
 		"height":     "75%",
 		"focus":      true,
-		"env":        map[string]string{},
+		"env":        env,
 	}, nil)
 }
 func (c *HerdrClient) TabCreate(workspaceID, path, label string, focus bool) (Tab, Pane, error) {

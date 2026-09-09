@@ -10,7 +10,8 @@ import (
 	"strings"
 )
 
-func shellCommand(command string) *exec.Cmd { return exec.Command("/bin/sh", "-lc", command) }
+// Inherit Herdr's environment without rerunning login profiles on each preview.
+func shellCommand(command string) *exec.Cmd { return exec.Command("/bin/sh", "-c", command) }
 
 func replacePlaceholder(command, value string) string {
 	return strings.ReplaceAll(command, "{}", shellQuote(value))
@@ -43,10 +44,8 @@ func listFrecency(cfg FrecencyConfig) ([]Candidate, error) {
 				path = strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
 			}
 		}
-		path, err = expandPath(path)
-		if err != nil {
-			continue
-		}
+		// Backend output is a literal path. Expanding environment variables here
+		// corrupts valid directory names containing a dollar sign.
 		result = append(result, Candidate{Kind: "zoxide", Path: path, Score: score})
 	}
 	return result, scanner.Err()
@@ -69,7 +68,7 @@ func addFrecency(cfg FrecencyConfig, path string) {
 
 // frecencyCommand runs ordinary argv-style commands directly. Avoiding a login
 // shell saves roughly 100ms on macOS for the default zoxide query. Commands that
-// intentionally use shell operators still fall back to /bin/sh -lc.
+// intentionally use shell operators still fall back to /bin/sh -c.
 func frecencyCommand(command, value string) *exec.Cmd {
 	if !requiresShell(command) {
 		if argv, err := splitCommandLine(command); err == nil && len(argv) > 0 {
@@ -94,6 +93,9 @@ func requiresShell(command string) bool {
 			escaped = true
 			continue
 		}
+		if (r == '$' || r == '`') && quote != '\'' {
+			return true
+		}
 		if quote != 0 {
 			if r == quote {
 				quote = 0
@@ -104,7 +106,7 @@ func requiresShell(command string) bool {
 			quote = r
 			continue
 		}
-		if strings.ContainsRune("|&;<>()$`\n", r) {
+		if strings.ContainsRune("|&;<>()~*?[=\n", r) {
 			return true
 		}
 	}

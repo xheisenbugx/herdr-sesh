@@ -11,6 +11,7 @@ import (
 type Service struct {
 	cfg          Config
 	client       *HerdrClient
+	configFile   string
 	projectCache map[string]projectCacheEntry
 }
 
@@ -20,15 +21,25 @@ type projectCacheEntry struct {
 }
 
 func newService(cfg Config) (*Service, error) {
-	c, err := newHerdrClient()
-	if err != nil {
-		return nil, err
-	}
+	// Directory listing and previews do not require a running Herdr server.
+	c := &HerdrClient{socketPath: os.Getenv("HERDR_SOCKET_PATH")}
 	return &Service{cfg: cfg, client: c, projectCache: map[string]projectCacheEntry{}}, nil
 }
 
 func (s *Service) List(kinds map[string]bool, includeBlacklisted bool) ([]Candidate, error) {
 	var all []Candidate
+	type frecencyResult struct {
+		candidates []Candidate
+		err        error
+	}
+	var recent chan frecencyResult
+	if len(kinds) == 0 || kinds["zoxide"] {
+		recent = make(chan frecencyResult, 1)
+		go func() {
+			cs, err := listFrecency(s.cfg.Frecency)
+			recent <- frecencyResult{cs, err}
+		}()
+	}
 	if len(kinds) == 0 || kinds["herdr"] {
 		snap, err := s.client.Snapshot()
 		if err != nil {
@@ -43,29 +54,27 @@ func (s *Service) List(kinds map[string]bool, includeBlacklisted bool) ([]Candid
 		}
 		all = append(all, cs...)
 	}
-	if len(kinds) == 0 || kinds["zoxide"] {
-		zs, err := listFrecency(s.cfg.Frecency)
-		if err != nil {
-			return nil, err
+	if recent != nil {
+		result := <-recent
+		if result.err != nil {
+			return nil, result.err
 		}
+		zs := result.candidates
 		for i := range zs {
-			if project, ok := s.projectForPath(zs[i].Path); ok {
-				// Zoxide often contains several nested directories from the same
-				// repository. Treat the repository root as the workspace candidate.
-				zs[i].Path = project.Root
-				zs[i].Name = project.Name
-			}
+			// Like sesh, display the actual directory, at any depth. Git naming
+			// belongs to workspace creation, not this frequently executed path.
+			zs[i].Name = shortPath(zs[i].Path)
 			s.enrich(&zs[i])
 			all = append(all, zs[i])
 		}
 	}
-	all = s.dedupeCandidates(all)
 	filtered := all[:0]
 	for _, c := range all {
 		if isBlacklisted(c, s.cfg.Blacklist) == includeBlacklisted {
 			filtered = append(filtered, c)
 		}
 	}
+	filtered = s.dedupeCandidates(filtered)
 	order := map[string]int{}
 	for i, k := range s.cfg.SortOrder {
 		order[k] = i
@@ -82,8 +91,12 @@ func (s *Service) List(kinds map[string]bool, includeBlacklisted bool) ([]Candid
 		if oi != oj {
 			return oi < oj
 		}
-		if filtered[i].Kind == "zoxide" && filtered[i].Score != filtered[j].Score {
-			return filtered[i].Score > filtered[j].Score
+		if filtered[i].Kind != filtered[j].Kind {
+			return filtered[i].Kind < filtered[j].Kind
+		}
+		if filtered[i].Kind == "zoxide" {
+			// Preserve the backend's ranking, including equal-score ordering.
+			return false
 		}
 		return strings.ToLower(filtered[i].Name) < strings.ToLower(filtered[j].Name)
 	})
@@ -156,7 +169,7 @@ func (s *Service) enrich(c *Candidate) {
 
 func (s *Service) smartName(path string) string {
 	if project, ok := s.projectForPath(path); ok {
-		return sanitizeName(project.Name)
+		return projectDirectoryName(project, path)
 	}
 	return directoryName(path, s.cfg.DirLength)
 }
@@ -189,8 +202,7 @@ func (s *Service) projectForPath(path string) (gitProject, bool) {
 	entry := projectCacheEntry{project: project, found: found}
 	s.projectCache[abs] = entry
 	if found {
-		// Zoxide candidates are rewritten to the root, so this avoids reparsing
-		// Git config during deduplication and later preview operations.
+		// Reuse metadata when naming another directory in the same repository.
 		s.projectCache[fastPathKey(project.Root)] = entry
 	}
 	return project, found
@@ -213,27 +225,43 @@ func (s *Service) matchWildcard(path string) (WildcardConfig, bool) {
 
 func (s *Service) Resolve(value string) (Candidate, error) {
 	value = strings.TrimSpace(value)
-	candidates, err := s.List(map[string]bool{}, false)
-	if err != nil {
-		return Candidate{}, err
-	}
-	for _, c := range candidates {
-		if strings.EqualFold(value, c.Alias) || strings.EqualFold(value, c.Name) || value == c.WorkspaceID {
-			return c, nil
-		}
-	}
 	path, err := expandPath(value)
 	if err != nil {
 		return Candidate{}, err
 	}
+	// Explicit paths bypass listing every workspace and zoxide directory.
+	if strings.ContainsAny(value, `/\\`) || value == "." || value == ".." || value == "~" {
+		if st, e := os.Stat(path); e == nil && st.IsDir() {
+			c := Candidate{Kind: "zoxide", Path: path, Name: shortPath(path)}
+			s.enrich(&c)
+			return c, nil
+		}
+	}
+	if s.client != nil && (s.client.socketPath != "" || s.client.dial != nil) {
+		if snap, e := s.client.Snapshot(); e == nil {
+			for _, c := range s.activeCandidates(snap) {
+				if strings.EqualFold(value, c.Alias) || strings.EqualFold(value, c.Name) || value == c.WorkspaceID {
+					return c, nil
+				}
+			}
+		}
+	}
+	configured, err := s.configCandidates()
+	if err != nil {
+		return Candidate{}, err
+	}
+	for _, c := range configured {
+		if strings.EqualFold(value, c.Alias) || strings.EqualFold(value, c.Name) {
+			return c, nil
+		}
+	}
 	if st, e := os.Stat(path); e == nil && st.IsDir() {
-		c := Candidate{Kind: "zoxide", Path: path}
+		c := Candidate{Kind: "zoxide", Path: path, Name: shortPath(path)}
 		s.enrich(&c)
 		return c, nil
 	}
 	if path, e := queryFrecency(s.cfg.Frecency, value); e == nil && path != "" {
-		path, _ = expandPath(path)
-		c := Candidate{Kind: "zoxide", Path: path}
+		c := Candidate{Kind: "zoxide", Path: path, Name: shortPath(path)}
 		s.enrich(&c)
 		return c, nil
 	}
@@ -246,7 +274,19 @@ func (s *Service) Connect(c Candidate, command string) (Workspace, error) {
 		return Workspace{}, err
 	}
 	for _, w := range snap.Workspaces {
-		if w.ID == c.WorkspaceID || strings.EqualFold(w.Label, c.Name) || workspaceHasPath(snap, w.ID, c.Path) {
+		// A directory's display name is not workspace identity. In particular,
+		// separate checkouts and monorepo subdirectories must stay selectable.
+		match := c.WorkspaceID != "" && w.ID == c.WorkspaceID
+		if c.WorkspaceID == "" {
+			if c.Kind == "config" {
+				// A named session owns its startup commands and tabs. Another
+				// workspace merely visiting its directory is not that session.
+				match = strings.EqualFold(w.Label, c.Name)
+			} else {
+				match = workspaceHasPath(snap, w.ID, c.Path)
+			}
+		}
+		if match {
 			recordTransition(snap.FocusedWorkspaceID, w.ID)
 			if err := s.client.WorkspaceFocus(w.ID); err != nil {
 				return Workspace{}, err
@@ -257,7 +297,11 @@ func (s *Service) Connect(c Candidate, command string) (Workspace, error) {
 	if st, err := os.Stat(c.Path); err != nil || !st.IsDir() {
 		return Workspace{}, fmt.Errorf("workspace directory does not exist: %s", c.Path)
 	}
-	w, tab, pane, err := s.client.WorkspaceCreate(c.Path, c.Name, true)
+	name := c.Name
+	if c.Kind == "zoxide" || c.Kind == "find" {
+		name = s.smartName(c.Path)
+	}
+	w, tab, pane, err := s.client.WorkspaceCreate(c.Path, name, true)
 	if err != nil {
 		return Workspace{}, err
 	}
@@ -334,20 +378,9 @@ func (s *Service) applyTabs(w Workspace, rootTab Tab, rootPane Pane, names []str
 
 func (s *Service) Preview(c Candidate) (string, error) {
 	if c.WorkspaceID != "" {
-		snap, err := s.client.Snapshot()
-		if err == nil {
-			var parts []string
-			for _, p := range snap.Panes {
-				if p.WorkspaceID == c.WorkspaceID {
-					text, e := s.client.PaneRead(p.ID, 80)
-					if e == nil && strings.TrimSpace(text) != "" {
-						parts = append(parts, text)
-					}
-				}
-			}
-			if len(parts) > 0 {
-				return strings.Join(parts, "\n\n"), nil
-			}
+		text, err := s.workspacePreview(c)
+		if text != "" || (err != nil && c.Path == "") {
+			return text, err
 		}
 	}
 	cmd := c.PreviewCommand
@@ -408,41 +441,30 @@ func isBlacklisted(c Candidate, list []string) bool {
 }
 func (s *Service) dedupeCandidates(in []Candidate) []Candidate {
 	seenPaths := map[string]bool{}
-	seenNames := map[string]bool{}
-	reservedProjects := map[string]bool{}
-	seenZoxideProjects := map[string]bool{}
+	liveNames := map[string]bool{}
+	seenWorkspaces := map[string]bool{}
 	out := make([]Candidate, 0, len(in))
 	for _, c := range in {
 		pathKey := fastPathKey(c.Path)
-		if pathKey != "" && seenPaths[pathKey] {
-			continue
-		}
 		nameKey := strings.ToLower(strings.TrimSpace(c.Name))
-		if nameKey != "" && seenNames[nameKey] {
-			continue
-		}
-		projectKey := ""
-		if project, ok := s.projectForPath(c.Path); ok {
-			projectKey = fastPathKey(project.Root)
-		}
-		if c.Kind == "zoxide" {
-			if projectKey != "" && (reservedProjects[projectKey] || seenZoxideProjects[projectKey]) {
+		switch c.Kind {
+		case "herdr":
+			if c.WorkspaceID != "" && seenWorkspaces[c.WorkspaceID] {
 				continue
 			}
-			if projectKey != "" {
-				seenZoxideProjects[projectKey] = true
+			seenWorkspaces[c.WorkspaceID] = true
+			liveNames[nameKey] = true
+		case "config":
+			if liveNames[nameKey] {
+				continue
 			}
-		} else if projectKey != "" {
-			// Active/configured entries remain distinct when they intentionally
-			// target different monorepo subdirectories, but they suppress the
-			// generic zoxide entry for that repository.
-			reservedProjects[projectKey] = true
+		default:
+			if pathKey != "" && seenPaths[pathKey] {
+				continue
+			}
 		}
 		if pathKey != "" {
 			seenPaths[pathKey] = true
-		}
-		if nameKey != "" {
-			seenNames[nameKey] = true
 		}
 		out = append(out, c)
 	}

@@ -18,14 +18,23 @@ type gitProject struct {
 	Name string
 }
 
-// smartName deliberately discovers Git metadata through the filesystem instead
-// of spawning git. The picker may name hundreds of zoxide paths at startup, and
-// two git processes per path made opening it noticeably slow.
+// smartName discovers Git metadata through the filesystem when creating a
+// workspace. Listing directories does not need Git metadata at all.
 func smartName(path string, cfg Config) string {
 	if project, ok := findGitProject(path, cfg); ok {
-		return sanitizeName(project.Name)
+		return projectDirectoryName(project, path)
 	}
 	return directoryName(path, cfg.DirLength)
+}
+
+func projectDirectoryName(project gitProject, path string) string {
+	name := project.Name
+	if abs, err := filepath.Abs(path); err == nil {
+		if rel, err := filepath.Rel(project.Root, abs); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			name += "/" + filepath.ToSlash(rel)
+		}
+	}
+	return sanitizeName(name)
 }
 
 func directoryName(path string, length int) string {
