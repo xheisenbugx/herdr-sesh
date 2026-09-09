@@ -31,14 +31,30 @@ func serviceFor(opts *rootOptions) (*Service, string, error) {
 		return nil, path, err
 	}
 	s, err := newService(cfg)
+	if err == nil {
+		if _, statErr := os.Stat(path); statErr == nil {
+			s.configFile, _ = filepath.Abs(path)
+		}
+	}
 	return s, path, err
 }
 
-func newPickerCommand(_ *rootOptions) *cobra.Command {
+func newPickerCommand(opts *rootOptions) *cobra.Command {
 	return &cobra.Command{Use: "picker", Aliases: []string{"pick", "pk"}, Short: "Open the Herdr fuzzy workspace picker", RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := newHerdrClient()
 		if err != nil {
 			return err
+		}
+		if opts.config != "" {
+			_, path, err := loadConfig(opts.config)
+			if err != nil {
+				return err
+			}
+			path, err = filepath.Abs(path)
+			if err != nil {
+				return err
+			}
+			return client.OpenPickerPopup(path)
 		}
 		return client.OpenPickerPopup()
 	}}

@@ -100,6 +100,9 @@ func defaultConfig() Config {
 }
 
 func configPath(explicit string) (string, error) {
+	if explicit == "" {
+		explicit = os.Getenv("HERDR_SESH_CONFIG")
+	}
 	if explicit != "" {
 		return expandPath(explicit)
 	}

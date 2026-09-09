@@ -30,7 +30,7 @@ func TestWildcardRecursiveAndSingleLevel(t *testing.T) {
 
 func TestDedupePrefersActiveCandidate(t *testing.T) {
 	path := t.TempDir()
-	in := []Candidate{{Kind: "herdr", Name: "live", Path: path, WorkspaceID: "w1"}, {Kind: "config", Name: "configured", Path: path}, {Kind: "zoxide", Name: "recent", Path: path}}
+	in := []Candidate{{Kind: "herdr", Name: "live", Path: path, WorkspaceID: "w1"}, {Kind: "config", Name: "live", Path: path}, {Kind: "zoxide", Name: "recent", Path: path}}
 	out := (&Service{cfg: defaultConfig()}).dedupeCandidates(in)
 	if len(out) != 1 || out[0].WorkspaceID != "w1" {
 		t.Fatalf("dedupe = %+v", out)
@@ -201,7 +201,7 @@ func TestGitProjectUsesFilesystemMetadata(t *testing.T) {
 	}
 }
 
-func TestDedupeCollapsesNestedZoxideRepositoryEntries(t *testing.T) {
+func TestDedupePreservesNestedZoxideRepositoryEntries(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	first := filepath.Join(repo, "services", "api")
 	second := filepath.Join(repo, "services", "worker")
@@ -215,12 +215,12 @@ func TestDedupeCollapsesNestedZoxideRepositoryEntries(t *testing.T) {
 		{Kind: "zoxide", Name: "repo", Path: first, Score: 10},
 		{Kind: "zoxide", Name: "repo", Path: second, Score: 5},
 	})
-	if len(out) != 1 || out[0].Path != first {
+	if len(out) != 2 || out[0].Path != first || out[1].Path != second {
 		t.Fatalf("dedupe = %+v", out)
 	}
 }
 
-func TestDedupePrefersActiveWorkspaceOverZoxideRepository(t *testing.T) {
+func TestActiveSubdirectoryDoesNotHideZoxideRepository(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	nested := filepath.Join(repo, "services", "api")
 	for _, path := range []string{filepath.Join(repo, ".git"), nested} {
@@ -233,18 +233,18 @@ func TestDedupePrefersActiveWorkspaceOverZoxideRepository(t *testing.T) {
 		{Kind: "herdr", Name: "api", Path: nested, WorkspaceID: "w1"},
 		{Kind: "zoxide", Name: "repo", Path: repo, Score: 10},
 	})
-	if len(out) != 1 || out[0].WorkspaceID != "w1" {
+	if len(out) != 2 || out[0].WorkspaceID != "w1" || out[1].Path != repo {
 		t.Fatalf("dedupe = %+v", out)
 	}
 }
 
-func TestDedupeRemovesSameZoxideDisplayName(t *testing.T) {
+func TestDedupePreservesSameZoxideDisplayName(t *testing.T) {
 	s := &Service{cfg: defaultConfig()}
 	out := s.dedupeCandidates([]Candidate{
 		{Kind: "zoxide", Name: "nvim", Path: "/config/nvim", Score: 100},
 		{Kind: "zoxide", Name: "nvim", Path: "/state/nvim", Score: 10},
 	})
-	if len(out) != 1 || out[0].Path != "/config/nvim" {
+	if len(out) != 2 || out[0].Path != "/config/nvim" || out[1].Path != "/state/nvim" {
 		t.Fatalf("dedupe = %+v", out)
 	}
 }
@@ -264,7 +264,7 @@ func TestDirectoryPreviewUsesCurrentEzaIconSyntax(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--icons=auto", "--", path} {
+	for _, want := range []string{"--oneline", "--icons=auto", "--", path} {
 		if !strings.Contains(out, want+"\n") {
 			t.Fatalf("preview args %q do not contain %q", out, want)
 		}
@@ -288,13 +288,10 @@ func BenchmarkNameAndDedupe250ZoxidePaths(b *testing.B) {
 		s := &Service{cfg: defaultConfig()}
 		candidates := make([]Candidate, len(paths))
 		for j, path := range paths {
-			project, ok := s.projectForPath(path)
-			if !ok {
-				b.Fatal("project not found")
-			}
-			candidates[j] = Candidate{Kind: "zoxide", Name: project.Name, Path: project.Root}
+			candidates[j] = Candidate{Kind: "zoxide", Name: shortPath(path), Path: path}
+			s.enrich(&candidates[j])
 		}
-		if got := len(s.dedupeCandidates(candidates)); got != 1 {
+		if got := len(s.dedupeCandidates(candidates)); got != len(paths) {
 			b.Fatalf("got %d candidates", got)
 		}
 	}
