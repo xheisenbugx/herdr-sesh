@@ -91,8 +91,8 @@ Live previews put the active tab first, retain terminal colors, and exclude the
 picker's own pane. Pane reads run concurrently (up to four at a time) with socket
 deadlines; a closed pane does not prevent the others from appearing. If an
 optional directory preview tool fails, the next available tool is tried.
-Directory listings use one entry per line, and the preview wraps long lines to
-keep filenames and configured file previews readable in narrow popups.
+Directory listings use one entry per line. Previews keep long lines unwrapped
+and hide wrap indicators, so narrow popups do not add continuation symbols.
 
 Zoxide entries display their full paths with `~` for your home directory. They
 are never collapsed to Git roots or removed because two directories have the

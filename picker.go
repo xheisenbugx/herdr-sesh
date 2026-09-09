@@ -107,7 +107,7 @@ func runPickerUI(service *Service, query string) error {
 		args = append(args, "--layout=reverse")
 	}
 	if service.cfg.TUI.Preview == nil || *service.cfg.TUI.Preview {
-		args = append(args, "--preview="+preview, "--preview-window=right:"+strconv.Itoa(service.cfg.TUI.PreviewWidth)+"%:wrap")
+		args = append(args, "--preview="+preview, "--preview-window=right:"+strconv.Itoa(service.cfg.TUI.PreviewWidth)+"%:nowrap", "--preview-wrap-sign=")
 	}
 	cmd := exec.Command("fzf", args...)
 	cmd.Env = append(os.Environ(), "HERDR_SESH_PICKER_PANE="+os.Getenv("HERDR_PANE_ID"))
