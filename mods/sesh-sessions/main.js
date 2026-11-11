@@ -12,7 +12,6 @@ const SOURCES = [
   { key: "all", label: "all", icon: null, ctrl: "a" },
   { key: "space", label: "spaces", icon: "grid", ctrl: "t" },
   { key: "config", label: "configs", icon: "gear", ctrl: "g" },
-  { key: "file", label: "session files", icon: "box", ctrl: "s" },
   { key: "zoxide", label: "zoxide", icon: "folder", ctrl: "z" },
   { key: "remote", label: "machines", icon: "branch", ctrl: "r" },
 ];
@@ -36,44 +35,6 @@ const ESC = { n: "\n", t: "\t", r: "\r", '"': '"', "\\": "\\" };
 const unescape = (x) => x.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_m, e) => (e.length === 5 ? String.fromCharCode(parseInt(e.slice(1), 16)) : ESC[e] ?? e));
 // A folder without its trailing slash ("/" stays "/").
 const trim = (p) => (p && p.length > 1 ? p.replace(/\/+$/, "") : p);
-// Words as a shell splits them: quotes and backslashes, no expansion.
-function shellWords(line) {
-  const out = [];
-  let cur = null, q = null;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (q) {
-      if (c === q) q = null;
-      else if (c === "\\" && q === '"' && i + 1 < line.length) cur += line[++i];
-      else cur += c;
-    } else if (c === "'" || c === '"') { q = c; cur ??= ""; }
-    else if (c === "\\" && i + 1 < line.length) { cur = (cur ?? "") + line[++i]; }
-    else if (/\s/.test(c)) { if (cur !== null) out.push(cur); cur = null; }
-    else if (c === "#" && cur === null) break;
-    else cur = (cur ?? "") + c;
-  }
-  if (cur !== null) out.push(cur);
-  return out;
-}
-// kitty's `launch [options] [program args…]`: options that take no value, the rest take one
-// (`--title x` or `--title=x`); `--cwd` is kept when it names a folder.
-const LAUNCH_FLAGS = new Set(["--keep-focus", "--dont-take-focus", "--copy-env", "--copy-cmdline", "--copy-colors", "--hold", "--allow-remote-control", "--remote-control-password", "--hold-after-ssh", "--add-to-session"]);
-function parseLaunch(words) {
-  let i = 0, cwd = null;
-  while (i < words.length && words[i].startsWith("--")) {
-    const w = words[i];
-    if (w === "--") { i++; break; }
-    const eq = w.indexOf("=");
-    const name = eq < 0 ? w : w.slice(0, eq);
-    let value = null;
-    if (eq >= 0) { value = w.slice(eq + 1); i++; }
-    else if (LAUNCH_FLAGS.has(name)) i++;
-    else { value = words[i + 1] ?? null; i += 2; }
-    if (name === "--cwd" && value && !/^(current|last_reported|oldest|root)$/.test(value)) cwd = value;
-  }
-  return { argv: words.slice(i), cwd };
-}
-
 function parseSesh(text) {
   const out = { sessions: [], startup: null };
   let cur = null;
@@ -101,7 +62,6 @@ export default class Sessions extends View {
     this.loading = new Set();
     this.zoxide = [];
     this.config = { sessions: [], startup: null };
-    this.files = []; // kitty session files: { name, path, argv }
     this.preview = {};
     this.remote = null; // [{ machine, path }] once asked (ctrl-r)
     this.scroll = ScrollHandle.new();
@@ -114,27 +74,6 @@ export default class Sessions extends View {
       const h = home();
       const text = await readTextFile(`${h}/${CONFIG}`).catch(() => null);
       this.config = parseSesh(text);
-      // kitty's session files (~/.config/kitty/sessions): a space at the file's
-      // `cd` folder, running its first `launch` command.
-      try {
-        const dir = `${h}/.config/kitty/sessions`;
-        const ls = await exec("ls", ["-1", dir], { timeout: 3000 });
-        for (const f of ls.code === 0 ? ls.stdout.split("\n").filter((x) => x.endsWith(".kitty-session")) : []) {
-          const text = (await readTextFile(`${dir}/${f}`)) ?? "";
-          let cwd = h, argv = null;
-          const home_ = (x) => x.replace(/^~(?=\/|$)/, h);
-          for (const raw of text.split("\n")) {
-            const words = shellWords(raw.trim());
-            if (words[0] === "cd" && words[1] && !argv) cwd = home_(words[1]);
-            if (words[0] === "launch" && !argv) {
-              const l = parseLaunch(words.slice(1));
-              if (l.cwd) cwd = home_(l.cwd);
-              argv = l.argv;
-            }
-          }
-          this.files.push({ name: f.replace(/\.kitty-session$/, ""), path: trim(cwd), argv: argv?.length ? argv : null });
-        }
-      } catch {}
       try {
         const r = await exec("zoxide", ["query", "-l"], { timeout: 5000 });
         if (r.code === 0) this.zoxide = r.stdout.split("\n").filter(Boolean);
@@ -170,8 +109,6 @@ export default class Sessions extends View {
         const path = trim(s.path.replace(/^~(?=\/|$)/, h));
         out.push({ kind: "config", key: `c:${s.name}`, name: s.name, path, startup: s.startup_command ?? null });
       }
-    if (this.source === "all" || this.source === "file")
-      for (const f of this.files) out.push({ kind: "file", key: `f:${f.name}`, name: f.name, path: f.path, argv: f.argv });
     if (this.source === "all" || this.source === "zoxide")
       for (const z of this.zoxide) if (!open.has(z)) out.push({ kind: "zoxide", key: `z:${z}`, name: this.tilde(z), path: z });
     if (this.source === "remote")
@@ -223,18 +160,14 @@ export default class Sessions extends View {
     // These are all on this computer: only its spaces count, and new ones start here
     // (machine "", not the focused space's machine).
     const local = spaces().filter((p) => !p.machine);
-    // A named session (config, session file) is its space by name first.
-    if (r.kind === "config" || r.kind === "file") {
+    // A config session is its space by name first.
+    if (r.kind === "config") {
       const named = local.find((p) => p.named && p.name === r.name);
       if (named) return run("space.select", { id: named.id });
     }
-    // Otherwise a space already there (by its folder, or a terminal in it) is reused; not for
-    // session files, which often share a folder (`cd ~`) and are told apart by name.
-    if (r.kind !== "file") {
-      const there = local.find((p) => trim(p.folder) === r.path) ?? local.find((p) => panes().some((x) => trim(x.cwd) === r.path && p.tabs.some((tb) => tb.id === x.tab)));
-      if (there) return run("space.select", { id: there.id });
-    }
-    if (r.kind === "file") return run("space.new", { name: r.name, folder: r.path, machine: "", ...(r.argv ? { argv: r.argv } : {}) });
+    // Otherwise a space already there (by its folder, or a terminal in it) is reused.
+    const there = local.find((p) => trim(p.folder) === r.path) ?? local.find((p) => panes().some((x) => trim(x.cwd) === r.path && p.tabs.some((tb) => tb.id === x.tab)));
+    if (there) return run("space.select", { id: there.id });
     const cmd = r.startup ?? this.config.startup;
     const name = r.kind === "config" ? r.name : undefined;
     run("space.new", { folder: r.path, machine: "", ...(name ? { name } : {}), ...(cmd ? { argv: ["sh", "-c", cmd] } : {}) });
@@ -292,7 +225,6 @@ export default class Sessions extends View {
       if (r.status && r.status !== "idle") return L.glyph(t, r.status);
       return svg(L.ICON("grid")).size(12).flex_none().text_color(t.ansi4 ?? t.accent);
     }
-    if (r.kind === "file") return svg(L.ICON("box")).size(12).flex_none().text_color(t.ansi3 ?? t.muted);
     if (r.kind === "config") return svg(L.ICON("gear")).size(12).flex_none().text_color(t.muted);
     if (r.kind === "remote") return svg(L.ICON("branch")).size(12).flex_none().text_color(t.ansi5 ?? t.accent);
     return svg(L.ICON("folder")).size(12).flex_none().text_color(t.ansi6 ?? t.done);
@@ -367,6 +299,6 @@ export default class Sessions extends View {
       )
       .child(h_flex().flex_none().h(40).gap(8).items_center().border_t(1).border_color(t.border).mt(6)
         .child(hint("↵", "connect")).child(dot()).child(hint("^o", this.showPreview ? "hide preview" : "show preview")).child(dot())
-        .child(hint("^a ^t ^g ^s ^z ^r", "source")).child(dot()).child(hint("^x", "kill")).child(dot()).child(hint("esc", "quit")));
+        .child(hint("^a ^t ^g ^z ^r", "source")).child(dot()).child(hint("^x", "kill")).child(dot()).child(hint("esc", "quit")));
   }
 }

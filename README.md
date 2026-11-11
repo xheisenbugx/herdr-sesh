@@ -134,13 +134,12 @@ The picker opens every agent in one big window, with the selected agent's live s
 
 ### The session picker (`cmd-p`)
 
-![The session picker: spaces, configs, session files, zoxide directories and other machines, with a preview](docs/images/sessions.png)
+![The session picker: spaces, configs, zoxide directories and other machines, with a preview](docs/images/sessions.png)
 
 The session picker works like [sesh](https://github.com/joshmedeski/sesh), with Herdr spaces as the sessions. It lists:
 
 - **spaces:** your Herdr spaces, the ones that need you first;
 - **configs:** the `[[session]]` entries in herdr-sesh's own config, `~/.config/herdr-sesh/config.toml` (see [Configuration](#configuration));
-- **session files:** kitty session files in `~/.config/kitty/sessions`;
 - **zoxide:** the directories you use most;
 - **machines:** zoxide directories on your other Herdr machines (`hc machine ls`).
 
@@ -149,7 +148,7 @@ When you pick a directory, Herdr goes to the space already open there, or opens 
 | key | does |
 | --- | --- |
 | `enter` | go to the session |
-| `ctrl-a` `ctrl-t` `ctrl-g` `ctrl-s` `ctrl-z` `ctrl-r` | show all, spaces, configs, session files, zoxide, machines |
+| `ctrl-a` `ctrl-t` `ctrl-g` `ctrl-z` `ctrl-r` | show all, spaces, configs, zoxide, machines |
 | `ctrl-x` | close the space, or forget a zoxide directory |
 | `ctrl-o` | show or hide the preview |
 | `esc` | quit |
@@ -281,7 +280,6 @@ Herdr mods are trusted code, so here is everything this layout does outside its 
   - `osascript`, for macOS notifications.
 - **Files it reads:**
   - `~/.config/herdr-sesh/config.toml`, its settings;
-  - `~/.config/kitty/sessions/*.kitty-session`;
   - `~/.claude/sessions/<pid>.json`, to learn each Claude Code conversation's id so a closed thread can be resumed.
 - **Its state:** pins, snoozes and settled threads live in Herdr's own shared state (`shared.json`). Nothing is sent anywhere.
 

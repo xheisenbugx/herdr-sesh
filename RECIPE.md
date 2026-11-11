@@ -1,6 +1,6 @@
 # herdr-sesh
 
-A keyboard-first layout for coding agents. A thread sidebar on the left sorts every agent into Pinned, Inbox and three folded shelves (Working, Snoozed, Settled). Each thread shows what the agent needs ("Allow Bash: npm test"), its branch and its PR. Two full-window pickers sit on `cmd-a` (agents, with the selected agent's live screen) and `cmd-p` (sessions: spaces, `[[session]]` entries from `~/.config/herdr-sesh/config.toml`, kitty session files, zoxide, other machines). Everything is monospace, dark purple and terminal-like.
+A keyboard-first layout for coding agents. A thread sidebar on the left sorts every agent into Pinned, Inbox and three folded shelves (Working, Snoozed, Settled). Each thread shows what the agent needs ("Allow Bash: npm test"), its branch and its PR. Two full-window pickers sit on `cmd-a` (agents, with the selected agent's live screen) and `cmd-p` (sessions: spaces, `[[session]]` entries from `~/.config/herdr-sesh/config.toml`, zoxide, other machines). Everything is monospace, dark purple and terminal-like.
 
 ![herdr-sesh](preview.png)
 
@@ -61,9 +61,9 @@ The ANSI colours are Catppuccin-like. `ui_font` is JetBrains Mono.
 **Session picker** (`sesh-sessions`, a dialog 86% × 72%):
 
 - The title "Sessions ////".
-- The source chips: all · spaces · configs · session files · zoxide · machines. The active one is bold accent.
+- The source chips: all · spaces · configs · zoxide · machines. The active one is bold accent.
 - A filter input.
-- On the left, 40%: the list. Spaces show their status glyph (else a blue grid), configs a gear, files a box, zoxide folders a teal folder, machines a branch.
+- On the left, 40%: the list. Spaces show their status glyph (else a blue grid), configs a gear, zoxide folders a teal folder, machines a branch.
 - On the right: the preview, either the space's screen or an `ls` of the folder.
 
 **Actions menu** (`sesh-menu`, a 260 × 460 popup): the thread's title in accent, then rows with an icon, a label and the sidebar letter on the right (Approve a, Deny x, Reply… r | Pin p, Settle s, Snooze z, Mark seen e | Review d, Open PR P, Rename R, New thread n | Close X in red).
