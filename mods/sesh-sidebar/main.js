@@ -29,7 +29,7 @@ const KEYS = [
   ["P", "open its pull request"],
   ["n / N", "new thread / new thread in a new worktree"],
   ["R", "rename the thread"],
-  ["X", "close its pane (forget a closed thread)"],
+  ["X", "close its pane (press twice; forgets a closed thread)"],
   ["A", "archive: remove its worktree"],
   ["space / m / right click", "everything you can do to it, as a menu"],
   ["/", "filter"],
@@ -49,6 +49,9 @@ export default class Sidebar extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
     this.scroll = ScrollHandle.new();
+    this.shelfScroll = ScrollHandle.new();
+    this.scrolledTo = null;
+    this.replyTo = null; // the address `r` was pressed on
     this.sel = null; // address, or "shelf:<key>"
     this.open = { working: false, snoozed: false, settled: false };
     this.mode = null; // "filter" | "reply" | "help"
@@ -63,7 +66,8 @@ export default class Sidebar extends View {
     this.filterInput.on("submit", (_e, cx) => { this.mode = null; this.handle.focus(); cx.notify(); });
     this.replyInput = InputState.new({ placeholder: "reply…" });
     this.replyInput.on("submit", (_e, cx) => {
-      const th = this.current();
+      // To the thread you pressed `r` on, wherever the selection has gone since.
+      const th = this.model().all.find((t) => t.address === this.replyTo) ?? null;
       const text = this.replyInput.value();
       this.replyInput.set_value("");
       this.mode = null;
@@ -122,18 +126,23 @@ export default class Sidebar extends View {
 
   // The rows you can move through, in screen order.
   items(m) {
-    const out = [...m.pinned, ...this.inboxOrder(m)];
+    return this.sections(m).map((x) => x.it);
+  }
+  // Each row with its section: "pinned", "inbox", or the shelf it's in (its header too).
+  sections(m) {
+    const out = [...m.pinned.map((it) => ({ it, sec: "pinned" })), ...this.inboxOrder(m).map((it) => ({ it, sec: "inbox" }))];
     for (const s of SHELVES) {
-      out.push({ shelf: s.key });
-      if (this.open[s.key] || this.filter) out.push(...m[s.key]);
+      out.push({ it: { shelf: s.key }, sec: s.key });
+      if (this.open[s.key] || this.filter) out.push(...m[s.key].map((it) => ({ it, sec: s.key })));
     }
     return out;
   }
+  // The threads as the list shows them (grouped or not): 1–9 and agent.next follow this.
+  order(m) {
+    return L.listOrder(m, this.group);
+  }
   inboxOrder(m) {
-    if (!this.group) return m.inbox;
-    const bySpace = new Map();
-    for (const th of m.inbox) { if (!bySpace.has(th.spaceName)) bySpace.set(th.spaceName, []); bySpace.get(th.spaceName).push(th); }
-    return [...bySpace.values()].flat();
+    return this.group ? L.groupInbox(m.inbox) : m.inbox;
   }
   keyOf(it) { return it.shelf ? `shelf:${it.shelf}` : it.address; }
   current() {
@@ -149,7 +158,7 @@ export default class Sidebar extends View {
     L.go(it);
   }
   menu(th, at = "pointer") {
-    L.openMenu(th, { at, from: "sidebar", pr: th?.cwd ? this.facts.git[th.cwd]?.pr ?? null : null });
+    L.openMenu(th, { at, from: "sidebar", pr: th ? this.facts.of(th).git?.pr ?? null : null });
   }
   act(name, th, cx) {
     // Snooze asks how long, with the same list as `z` and the actions menu.
@@ -190,17 +199,22 @@ export default class Sidebar extends View {
     else if (ch === "g") move(0);
     else if (ch === "G") move(items.length - 1);
     else if (k === "tab") {
-      const sec = (x) => (x.shelf ? x.shelf : x.pinned ? "pinned" : "inbox");
-      const here = it ? sec(it) : null;
-      const j = items.findIndex((x, n) => n > i && sec(x) !== here);
-      move(j < 0 ? 0 : j);
+      // To the first row of the next section (Shift: of this one, or the one before).
+      const secs = this.sections(m).map((x) => x.sec);
+      const starts = secs.map((sec, n) => (n === 0 || secs[n - 1] !== sec ? n : -1)).filter((n) => n >= 0);
+      if (starts.length) {
+        if (mod.shift) {
+          const back = starts.filter((n) => n < i);
+          move(back.length ? back[back.length - 1] : starts[starts.length - 1]);
+        } else move(starts.find((n) => n > i) ?? starts[0]);
+      }
     }
     else if (k === "enter") this.activate(it, cx);
     else if (k === "space" || ch === "m") this.menu(th);
-    else if (/^[1-9]$/.test(ch)) this.activate(m.order[Number(ch) - 1], cx);
+    else if (/^[1-9]$/.test(ch)) this.activate(this.order(m)[Number(ch) - 1], cx);
     else if (ch === "a" && live) cx.spawn(async () => L.approve(live));
     else if (ch === "x" && live) cx.spawn(async () => L.deny(live));
-    else if (ch === "r" && live) { this.mode = "reply"; this.replyInput.set_value(""); this.replyInput.focus(); }
+    else if (ch === "r" && live) { this.mode = "reply"; this.replyTo = live.address; this.replyInput.set_value(""); this.replyInput.focus(); }
     else if (ch === "p" && live) L.togglePin(live);
     else if (ch === "K" && live?.pinned) L.movePin(live, -1);
     else if (ch === "J" && live?.pinned) L.movePin(live, 1);
@@ -230,7 +244,7 @@ export default class Sidebar extends View {
   render() {
     const t = theme();
     const m = this.model();
-    setAgentOrder(m.order.map((x) => x.address));
+    setAgentOrder(this.order(m).map((x) => x.address));
     const items = this.items(m);
     if (!items.some((it) => this.keyOf(it) === this.sel)) {
       const here = m.all.find((x) => !x.closed && x.a.focused);
@@ -238,7 +252,7 @@ export default class Sidebar extends View {
     }
     const now = Date.now();
     const kids = [];
-    let selChild = -1;
+    let selChild = -1, selShelf = -1, replyShown = false;
     const rowOf = (th, prefix) => L.threadRow(t, th, {
       selected: th.address === this.sel, now, ...this.facts.of(th), id: `${prefix}-${th.address}`,
       hovered: this.hover === th.address,
@@ -250,7 +264,7 @@ export default class Sidebar extends View {
     const row = (th) => {
       if (th.address === this.sel) selChild = kids.length;
       kids.push(rowOf(th, "th"));
-      if (th.address === this.sel && this.mode === "reply") kids.push(this.replyBox(t));
+      if (th.address === this.replyTo && this.mode === "reply") { kids.push(this.replyBox(t)); replyShown = true; }
     };
 
     if (m.pinned.length) { kids.push(L.sectionHead(t, "pin", "PINNED", m.pinned.length)); m.pinned.forEach(row); }
@@ -270,6 +284,7 @@ export default class Sidebar extends View {
       const key = `shelf:${s.key}`;
       const on = this.sel === key;
       const isOpen = this.open[s.key] || !!this.filter;
+      if (on) selShelf = shelfKids.length;
       shelfKids.push(
         h_flex().id(key).w_full().pl(on ? 7 : 10).pr(10).py(2).gap(6).items_center().cursor_pointer()
           .when(on, (el) => el.bg(t.selected).border_l(3).border_color(t.accent))
@@ -281,11 +296,21 @@ export default class Sidebar extends View {
           .child(div().flex_none().text_color(t.muted).child(String(m[s.key].length))),
       );
       if (isOpen) for (const th of m[s.key]) {
+        if (th.address === this.sel) selShelf = shelfKids.length;
         shelfKids.push(rowOf(th, "sh"));
-        if (th.address === this.sel && this.mode === "reply") shelfKids.push(this.replyBox(t));
+        if (th.address === this.replyTo && this.mode === "reply") { shelfKids.push(this.replyBox(t)); replyShown = true; }
       }
     }
-    if (selChild >= 0) this.scroll.scroll_to_item(selChild);
+    // The thread you're replying to moved out of sight (into a folded shelf): the box
+    // stays, at the top of the list.
+    if (this.mode === "reply" && !replyShown) kids.unshift(this.replyBox(t));
+    // Bring the selection into view when it changes, not on every redraw (timers redraw,
+    // which would undo scrolling the list with the mouse).
+    if (this.sel !== this.scrolledTo) {
+      this.scrolledTo = this.sel;
+      if (selChild >= 0) this.scroll.scroll_to_item(selChild + (this.mode === "reply" && !replyShown ? 1 : 0));
+      if (selShelf >= 0) this.shelfScroll.scroll_to_item(selShelf);
+    }
 
     const counts = m.counts;
     const badge = (icon, color, n) => h_flex().gap(3).items_center().text_color(color).child(svg(L.ICON(icon)).size(11).text_color(color)).child(String(n));
@@ -329,7 +354,7 @@ export default class Sidebar extends View {
             .children(kids),
         )
         .child(
-          v_flex().id("th-shelves").flex_none().max_h(340).overflow_y_scrollbar().mx(12).pt(6).border_t(1).border_color(t.border)
+          v_flex().id("th-shelves").flex_none().max_h(340).overflow_y_scrollbar().track_scroll(this.shelfScroll).mx(12).pt(6).border_t(1).border_color(t.border)
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .children(shelfKids),
         ))

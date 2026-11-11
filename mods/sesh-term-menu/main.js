@@ -7,6 +7,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, agents, shared } from "herdr";
+import * as L from "./lib.js";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 function place(s) {
@@ -15,11 +16,15 @@ function place(s) {
 }
 
 // A space's checkout: "main" (a repo's own), "linked" (a worktree), or null.
+// A linked worktree's git dir differs from the repo's common one; comparing the two git's
+// own answers (from the same folder) avoids path spellings (symlinks, /private) and
+// treats a submodule as the main checkout it is. Works on git before 2.31 too.
+const SAME_GIT_DIR = 'd=$(git rev-parse --git-dir 2>/dev/null) && c=$(git rev-parse --git-common-dir) && ' +
+  'd=$(cd "$d" && pwd -P) && c=$(cd "$c" && pwd -P) || exit 1; [ "$d" = "$c" ] && echo main || echo linked';
 async function checkout(folder, on) {
-  const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd: folder, on });
-  const common = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: folder, on });
-  if (top.code !== 0 || common.code !== 0) return null;
-  return common.stdout.trim() === `${top.stdout.trim()}/.git` ? "main" : "linked";
+  const r = await exec("sh", ["-c", SAME_GIT_DIR], { cwd: folder, on });
+  const word = r.stdout.trim();
+  return r.code === 0 && (word === "main" || word === "linked") ? word : null;
 }
 
 function items(p, git) {
@@ -117,7 +122,10 @@ export default class Menu extends View {
     const it = items(props(), this.git)[i];
     if (!it) return;
     closeOverlay(props()?.overlay);
-    if (it[1] === "sesh-menu") openOverlay({ mod: "sesh-menu", kind: "popup", at: "pointer", width: 260, height: 520, props: { address: it[2].address, from: "terminal", pr: null, view: "main" } });
+    if (it[1] === "sesh-menu") {
+      const th = L.threads().all.find((x) => x.address === it[2].address);
+      if (th) L.openMenu(th, { from: "terminal" });
+    }
     else if (it[1] === "worktree") openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
     else run(it[1], it[2]);
   }
@@ -134,6 +142,7 @@ export default class Menu extends View {
       .bg(t.popover)
       .text_size(12.8)
       .on_key_down((e, cx) => {
+        if (!list.length) return;
         if (e.key === "down") this.at = (this.at + 1) % list.length;
         else if (e.key === "up") this.at = (this.at + list.length - 1) % list.length;
         else if (e.key === "enter") this.choose(this.at, cx);
