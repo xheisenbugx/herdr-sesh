@@ -139,13 +139,10 @@ export default class Sidebar extends View {
   }
   // The threads as the list shows them (grouped or not): 1–9 and agent.next follow this.
   order(m) {
-    return [...m.pinned, ...this.inboxOrder(m), ...m.working];
+    return L.listOrder(m, this.group);
   }
   inboxOrder(m) {
-    if (!this.group) return m.inbox;
-    const bySpace = new Map();
-    for (const th of m.inbox) { if (!bySpace.has(th.spaceName)) bySpace.set(th.spaceName, []); bySpace.get(th.spaceName).push(th); }
-    return [...bySpace.values()].flat();
+    return this.group ? L.groupInbox(m.inbox) : m.inbox;
   }
   keyOf(it) { return it.shelf ? `shelf:${it.shelf}` : it.address; }
   current() {
@@ -247,7 +244,7 @@ export default class Sidebar extends View {
   render() {
     const t = theme();
     const m = this.model();
-    setAgentOrder(this.order(m).filter((x) => !x.closed).map((x) => x.address));
+    setAgentOrder(this.order(m).map((x) => x.address));
     const items = this.items(m);
     if (!items.some((it) => this.keyOf(it) === this.sel)) {
       const here = m.all.find((x) => !x.closed && x.a.focused);

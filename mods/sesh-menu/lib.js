@@ -269,6 +269,19 @@ export function threads({ filter = "", space = null, now = Date.now() } = {}) {
   return { pinned, inbox, working, snoozed, settled, all, counts, order: [...pinned, ...inbox, ...working] };
 }
 
+// The inbox grouped by space (each space where its first thread is), as the sidebar shows
+// it with "group by space" on.
+export function groupInbox(inbox) {
+  const bySpace = new Map();
+  for (const th of inbox) { if (!bySpace.has(th.spaceName)) bySpace.set(th.spaceName, []); bySpace.get(th.spaceName).push(th); }
+  return [...bySpace.values()].flat();
+}
+// The live threads in the order the sidebar lists them: what 1–9, cmd-ctrl-j/k and
+// agent.next go through.
+export function listOrder(m, group = !!shared("sesh.view")?.group) {
+  return [...m.pinned, ...(group ? groupInbox(m.inbox) : m.inbox), ...m.working].filter((t) => !t.closed);
+}
+
 export function fuzzy(q) {
   const needle = q.toLowerCase().replace(/\s+/g, "");
   return (hay) => {
