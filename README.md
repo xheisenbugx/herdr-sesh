@@ -52,11 +52,14 @@ sh install.sh
 The installer:
 
 1. copies the layout, its theme and its seven mods into `~/.config/herdr-app` (or `$HERDR_APP_HOME`);
-2. adds the layout's keys to your `keys.json`, and keeps a backup (`keys.json.bak-<time>`). It only adds its own sections, `layout:herdr-sesh` and `mod:sesh-*`. Your other keys stay as they are;
+2. merges the layout's keys into your `keys.json`, and keeps a backup (`keys.json.bak-<time>`). It only touches the sections it ships (`layout:herdr-sesh`, `mod:sesh-agents`, `mod:sesh-sessions`, `mod:sesh-menu`). Your other keys stay as they are;
 3. checks every mod with `herdr-app check`;
 4. switches Herdr to the layout.
 
-It never overwrites anything of yours. If a file or mod with the same name is already there, it stops and tells you. `--force` replaces them anyway, and `--no-switch` installs without switching.
+It never overwrites anything of yours. If a file with the same name is already there, it stops and tells you. `--force` replaces them anyway, keeping each of yours as `<name>.bak-<time>`. `--no-switch` installs without switching.
+
+> [!NOTE]
+> Herdr treats an edited `keys.json` as yours, and stops adding its new default shortcuts to it when it updates. Once the installer has merged its keys, new Herdr shortcuts have to be added by hand (`herdr-app commands` and Herdr's release notes list them).
 
 Your own layout is not touched. **`cmd-shift-l`** cycles through your layouts, and **Settings → Look** lists them all.
 
@@ -185,7 +188,7 @@ The actions menu lists everything you can do to a thread, each item with its sid
 | `cmd-ctrl-j` / `cmd-ctrl-k` / `cmd-ctrl-1`–`9` | next, previous, nth thread of the sidebar |
 | `cmd-t` | new tab |
 | `cmd-enter` / `cmd-d` / `cmd-\|` | split right |
-| `cmd-shift-d` / `cmd--` | split down |
+| `cmd-shift-d` | split down |
 | `cmd-h` / `cmd-l` | previous / next tab |
 | `cmd-i` / `cmd-o` | previous / next pane |
 | `cmd-w` | close the pane |
@@ -194,7 +197,7 @@ The actions menu lists everything you can do to a thread, each item with its sid
 | `cmd-alt-p` | Herdr's command palette (`cmd-shift-p` is taken by "previous space") |
 
 > [!NOTE]
-> A few of these keys replace what macOS or Herdr usually does with them, but only in this layout: `cmd-a` (select all), `cmd-h` (hide the app), `cmd-z` (undo) and `cmd-shift-p` (the palette). To change one, edit the `layout:herdr-sesh` section of `~/.config/herdr-app/keys.json`. Herdr applies the change at once.
+> A few of these keys replace what macOS or Herdr usually does with them, but only in this layout: `cmd-a` (select all), `cmd-h` (hide the app), `cmd-z` (undo) and `cmd-shift-p` (the palette). To change one, edit the `layout:herdr-sesh` section of `~/.config/herdr-app/keys.json`. Herdr applies the change at once, and updating the layout keeps it.
 
 ### In the sidebar
 
@@ -255,7 +258,9 @@ sh install.sh --uninstall      # remove the layout, its theme, its mods and its 
 
 Uninstalling keeps your `~/.config/herdr-sesh/config.toml`; delete it yourself if you want it gone.
 
-The installer records what it installed in `~/.config/herdr-app/.herdr-sesh`. An update replaces only those files.
+The installer records every file it installed in `~/.config/herdr-app/.herdr-sesh`. An update replaces only those files and removes the ones the layout no longer has; uninstalling removes only those, so files you added to its mod folders stay.
+
+Your edits to the layout's keys survive updates: the installer remembers what it installed (`.herdr-sesh-keys.json`), so a key you changed, removed or added stays as you left it, a key you didn't touch follows the layout, and new ones are added. Uninstalling removes only the keys you didn't change.
 
 To uninstall without the script, delete these and the `layout:herdr-sesh` and `mod:sesh-*` sections of `keys.json`:
 

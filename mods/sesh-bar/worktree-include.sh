@@ -4,7 +4,9 @@
 # the repo root, "#" comments, "!" lines skipped, nothing outside the repo) into it. Nothing is
 # overwritten. Prints "@<worktree root>" first (the caller remembers it), then "copied <path>" lines.
 top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+# The repo's shared git dir, as a real path (git before 2.31 can't print it absolute).
+common=$(git rev-parse --git-common-dir 2>/dev/null) && common=$(cd "$common" && pwd -P) || exit 0
+top=$(cd "$top" && pwd -P) || exit 0
 main=$(dirname "$common")
 echo "@$top"
 [ "$main" = "$top" ] && exit 0
@@ -17,11 +19,16 @@ while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in ""|\#*|!*) continue ;; esac
   line=${line#/}; line=${line%/}
   case "$line" in ..*|*/..*) continue ;; esac
-  for m in $line; do
-    [ -e "$m" ] || continue
-    mkdir -p "$top/$(dirname "$m")"
-    if [ -d "$m" ]; then mkdir -p "$top/$m" && cp -Rn "$m/." "$top/$m/" 2>/dev/null
-    elif [ ! -e "$top/$m" ]; then cp -p "$m" "$top/$m" 2>/dev/null
+  # Globs expand, but an entry isn't split at its spaces ("config/my secrets.env").
+  old_ifs=$IFS; IFS=
+  set -- $line
+  IFS=$old_ifs
+  for m in "$@"; do
+    [ -e "./$m" ] || continue
+    mkdir -p "$top/$(dirname "./$m")"
+    # "./": a name starting with "-" is a file, not an option.
+    if [ -d "./$m" ]; then mkdir -p "$top/$m" && cp -Rn "./$m/." "$top/$m/" 2>/dev/null || continue
+    elif [ ! -e "$top/$m" ]; then cp -p "./$m" "$top/$m" 2>/dev/null || continue
     else continue
     fi
     echo "copied $m"

@@ -32,7 +32,6 @@
     "cmd-z": "pane.zoom",
     "cmd-i": "sesh-bar.pane-prev",
     "cmd-o": "sesh-bar.pane-next",
-    "cmd--": "pane.split:down",
     "cmd-shift-\\": "pane.split:right",
     "cmd-|": "pane.split:right",
     "cmd-d": "pane.split:right",
