@@ -101,7 +101,7 @@ A snoozed agent that starts waiting on you wakes up by itself. A settled one tha
 
 **Threads outlive their panes.** If you close a Claude Code agent's pane, its thread stays in Settled as a *closed* thread. Press `enter` on it to resume the conversation (`claude --resume`) in its old space and folder.
 
-Click a thread to go to it. To drive the sidebar from the keyboard, press **`cmd-shift-b`** to move into it and again to go back. Press **`?`** for every key.
+Click a thread to go to it. Hover over one for its pin, snooze and settle buttons; snooze opens the same list of times as `z` and the actions menu. To drive the sidebar from the keyboard, press **`cmd-shift-b`** to move into it and again to go back. Press **`?`** for every key.
 
 ### The agent picker (`cmd-a`)
 
