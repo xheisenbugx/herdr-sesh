@@ -20,16 +20,71 @@ const RANK = { blocked: 0, done: 1, working: 2, idle: 3 };
 
 // herdr-sesh's config file, and just enough TOML for its [[session]] tables and [default_session].
 const CONFIG = ".config/herdr-sesh/config.toml";
+// A line without its comment: a # starts one only outside a quoted string.
+function stripComment(line) {
+  let q = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q === '"' && c === "\\") { i++; continue; }
+    if (q) { if (c === q) q = null; continue; }
+    if (c === '"' || c === "'") q = c;
+    else if (c === "#") return line.slice(0, i);
+  }
+  return line;
+}
+const ESC = { n: "\n", t: "\t", r: "\r", '"': '"', "\\": "\\" };
+const unescape = (x) => x.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_m, e) => (e.length === 5 ? String.fromCharCode(parseInt(e.slice(1), 16)) : ESC[e] ?? e));
+// A folder without its trailing slash ("/" stays "/").
+const trim = (p) => (p && p.length > 1 ? p.replace(/\/+$/, "") : p);
+// Words as a shell splits them: quotes and backslashes, no expansion.
+function shellWords(line) {
+  const out = [];
+  let cur = null, q = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === q) q = null;
+      else if (c === "\\" && q === '"' && i + 1 < line.length) cur += line[++i];
+      else cur += c;
+    } else if (c === "'" || c === '"') { q = c; cur ??= ""; }
+    else if (c === "\\" && i + 1 < line.length) { cur = (cur ?? "") + line[++i]; }
+    else if (/\s/.test(c)) { if (cur !== null) out.push(cur); cur = null; }
+    else if (c === "#" && cur === null) break;
+    else cur = (cur ?? "") + c;
+  }
+  if (cur !== null) out.push(cur);
+  return out;
+}
+// kitty's `launch [options] [program args…]`: options that take no value, the rest take one
+// (`--title x` or `--title=x`); `--cwd` is kept when it names a folder.
+const LAUNCH_FLAGS = new Set(["--keep-focus", "--dont-take-focus", "--copy-env", "--copy-cmdline", "--copy-colors", "--hold", "--allow-remote-control", "--remote-control-password", "--hold-after-ssh", "--add-to-session"]);
+function parseLaunch(words) {
+  let i = 0, cwd = null;
+  while (i < words.length && words[i].startsWith("--")) {
+    const w = words[i];
+    if (w === "--") { i++; break; }
+    const eq = w.indexOf("=");
+    const name = eq < 0 ? w : w.slice(0, eq);
+    let value = null;
+    if (eq >= 0) { value = w.slice(eq + 1); i++; }
+    else if (LAUNCH_FLAGS.has(name)) i++;
+    else { value = words[i + 1] ?? null; i += 2; }
+    if (name === "--cwd" && value && !/^(current|last_reported|oldest|root)$/.test(value)) cwd = value;
+  }
+  return { argv: words.slice(i), cwd };
+}
+
 function parseSesh(text) {
   const out = { sessions: [], startup: null };
   let cur = null;
   for (const raw of (text ?? "").split("\n")) {
-    const line = raw.replace(/\s+#.*$/, "").trim();
-    if (!line || line.startsWith("#")) continue;
-    if (line === "[[session]]") { cur = {}; out.sessions.push(cur); continue; }
-    if (line.startsWith("[")) { cur = line === "[default_session]" ? (out.def = {}) : null; continue; }
-    const m = line.match(/^(\w+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')/);
-    if (m && cur) cur[m[1]] = m[2] !== undefined ? m[2].replace(/\\"/g, '"').replace(/\\\\/g, "\\") : m[3];
+    const line = stripComment(raw).trim();
+    if (!line) continue;
+    const head = line.replace(/\s+/g, "");
+    if (head === "[[session]]") { cur = {}; out.sessions.push(cur); continue; }
+    if (head.startsWith("[")) { cur = head === "[default_session]" ? (out.def = {}) : null; continue; }
+    const m = line.match(/^([\w-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')\s*$/);
+    if (m && cur) cur[m[1]] = m[2] !== undefined ? unescape(m[2]) : m[3];
   }
   out.startup = out.def?.startup_command ?? null;
   out.sessions = out.sessions.filter((s) => s.name && s.path);
@@ -41,7 +96,9 @@ export default class Sessions extends View {
     this.filter = "";
     this.source = "all";
     this.showPreview = true;
-    this.sel = 0;
+    this.selKey = null; // the selected row's key: rows re-sort while the dialog is open
+    this.scrolledTo = null;
+    this.loading = new Set();
     this.zoxide = [];
     this.config = { sessions: [], startup: null };
     this.files = []; // kitty session files: { name, path, argv }
@@ -49,8 +106,8 @@ export default class Sessions extends View {
     this.remote = null; // [{ machine, path }] once asked (ctrl-r)
     this.scroll = ScrollHandle.new();
     this.input = InputState.new({ placeholder: "Filter sessions..." });
-    this.input.on("change", (_e, cx) => { this.filter = this.input.value(); this.sel = 0; this.refresh(cx); cx.notify(); });
-    this.input.on("submit", (_e) => this.connect(this.rows()[this.sel]));
+    this.input.on("change", (_e, cx) => { this.filter = this.input.value(); this.selKey = null; this.refresh(cx); cx.notify(); });
+    this.input.on("submit", (_e) => this.connect(this.selected()));
     this.input.focus();
     cx.timer.after(300, () => this.input.focus());
     cx.spawn(async (cx) => {
@@ -65,14 +122,17 @@ export default class Sessions extends View {
         for (const f of ls.code === 0 ? ls.stdout.split("\n").filter((x) => x.endsWith(".kitty-session")) : []) {
           const text = (await readTextFile(`${dir}/${f}`)) ?? "";
           let cwd = h, argv = null;
+          const home_ = (x) => x.replace(/^~(?=\/|$)/, h);
           for (const raw of text.split("\n")) {
-            const line = raw.trim();
-            const cd = line.match(/^cd\s+(.+)$/);
-            if (cd && !argv) cwd = cd[1].replace(/^~(?=\/|$)/, h);
-            const launch = line.match(/^launch(?:\s+(?:--\S+(?:=\S+)?\s+)*)?(.*)$/);
-            if (launch && !argv) argv = launch[1].trim() ? ["sh", "-c", launch[1].trim()] : [];
+            const words = shellWords(raw.trim());
+            if (words[0] === "cd" && words[1] && !argv) cwd = home_(words[1]);
+            if (words[0] === "launch" && !argv) {
+              const l = parseLaunch(words.slice(1));
+              if (l.cwd) cwd = home_(l.cwd);
+              argv = l.argv;
+            }
           }
-          this.files.push({ name: f.replace(/\.kitty-session$/, ""), path: cwd, argv: argv?.length ? argv : null });
+          this.files.push({ name: f.replace(/\.kitty-session$/, ""), path: trim(cwd), argv: argv?.length ? argv : null });
         }
       } catch {}
       try {
@@ -86,6 +146,7 @@ export default class Sessions extends View {
   }
 
   close() { closeOverlay(props().overlay); }
+  selected(rows = this.rows()) { return rows.find((r) => r.key === this.selKey) ?? rows[0] ?? null; }
   tilde(p) { const h = home(); return p.startsWith(h) ? "~" + p.slice(h.length) : p; }
 
   rows() {
@@ -98,14 +159,15 @@ export default class Sessions extends View {
       for (const r of sp) out.push(r);
     }
     for (const p of spaces()) {
-      if (p.folder) open.add(p.folder);
+      if (p.machine) continue;
+      if (p.folder) open.add(trim(p.folder));
       const tabs = new Set(p.tabs.map((tb) => tb.id));
-      for (const x of panes()) if (x.cwd && tabs.has(x.tab)) open.add(x.cwd);
+      for (const x of panes()) if (x.cwd && tabs.has(x.tab)) open.add(trim(x.cwd));
     }
     const h = home();
     if (this.source === "all" || this.source === "config")
       for (const s of this.config.sessions) {
-        const path = s.path.replace(/^~/, h);
+        const path = trim(s.path.replace(/^~(?=\/|$)/, h));
         out.push({ kind: "config", key: `c:${s.name}`, name: s.name, path, startup: s.startup_command ?? null });
       }
     if (this.source === "all" || this.source === "file")
@@ -119,8 +181,10 @@ export default class Sessions extends View {
 
   refresh(cx) {
     if (!this.showPreview) return;
-    const r = this.rows()[this.sel];
-    if (!r) return;
+    const r = this.selected();
+    // One look at a time per row: a slow machine mustn't pile up `ls` calls.
+    if (!r || this.loading.has(r.key)) return;
+    this.loading.add(r.key);
     cx.spawn(async (cx) => {
       let lines = null;
       if (r.kind === "space") {
@@ -142,6 +206,7 @@ export default class Sessions extends View {
         } catch { lines = ["(not found)"]; }
       }
       this.preview[r.key] = lines ?? [];
+      this.loading.delete(r.key);
       cx.notify();
     });
   }
@@ -155,17 +220,24 @@ export default class Sessions extends View {
       if (there) return run("space.select", { id: there.id });
       return run("space.new", { folder: r.path, machine: r.machine });
     }
-    // A space already there (by its folder, or a terminal in it) is reused.
-    const there = spaces().find((p) => p.folder === r.path) ?? spaces().find((p) => panes().some((x) => x.cwd === r.path && p.tabs.some((tb) => tb.id === x.tab)));
-    if (there) return run("space.select", { id: there.id });
-    if (r.kind === "file") {
-      const named = spaces().find((p) => p.named && p.name === r.name);
+    // These are all on this computer: only its spaces count, and new ones start here
+    // (machine "", not the focused space's machine).
+    const local = spaces().filter((p) => !p.machine);
+    // A named session (config, session file) is its space by name first.
+    if (r.kind === "config" || r.kind === "file") {
+      const named = local.find((p) => p.named && p.name === r.name);
       if (named) return run("space.select", { id: named.id });
-      return run("space.new", { name: r.name, folder: r.path, ...(r.argv ? { argv: r.argv } : {}) });
     }
+    // Otherwise a space already there (by its folder, or a terminal in it) is reused; not for
+    // session files, which often share a folder (`cd ~`) and are told apart by name.
+    if (r.kind !== "file") {
+      const there = local.find((p) => trim(p.folder) === r.path) ?? local.find((p) => panes().some((x) => trim(x.cwd) === r.path && p.tabs.some((tb) => tb.id === x.tab)));
+      if (there) return run("space.select", { id: there.id });
+    }
+    if (r.kind === "file") return run("space.new", { name: r.name, folder: r.path, machine: "", ...(r.argv ? { argv: r.argv } : {}) });
     const cmd = r.startup ?? this.config.startup;
     const name = r.kind === "config" ? r.name : undefined;
-    run("space.new", { folder: r.path, ...(name ? { name } : {}), ...(cmd ? { argv: ["sh", "-c", cmd] } : {}) });
+    run("space.new", { folder: r.path, machine: "", ...(name ? { name } : {}), ...(cmd ? { argv: ["sh", "-c", cmd] } : {}) });
   }
 
   // Directories on the other machines (ctrl-r): each one's zoxide list.
@@ -201,11 +273,13 @@ export default class Sessions extends View {
     const k = e.key;
     const c = e.modifiers.control;
     const src = SOURCES.find((s) => c && s.ctrl === k);
+    const i = Math.max(0, rows.findIndex((r) => r.key === this.selected(rows)?.key));
+    const pick = (j) => { if (rows.length) this.selKey = rows[Math.max(0, Math.min(rows.length - 1, j))].key; };
     if (k === "escape") return this.close();
-    if (k === "down" || (c && (k === "n" || k === "j"))) this.sel = Math.min(rows.length - 1, this.sel + 1);
-    else if (k === "up" || (c && (k === "p" || k === "k"))) this.sel = Math.max(0, this.sel - 1);
-    else if (src) { this.source = src.key; this.sel = 0; if (src.key === "remote") this.loadRemote(cx); }
-    else if (c && k === "x") this.kill(rows[this.sel], cx);
+    if (k === "down" || (c && (k === "n" || k === "j"))) pick(i + 1);
+    else if (k === "up" || (c && (k === "p" || k === "k"))) pick(i - 1);
+    else if (src) { this.source = src.key; this.selKey = null; if (src.key === "remote") this.loadRemote(cx); }
+    else if (c && k === "x") this.kill(this.selected(rows), cx);
     else if (c && k === "o") this.showPreview = !this.showPreview;
     else return;
     this.refresh(cx);
@@ -227,9 +301,11 @@ export default class Sessions extends View {
   render() {
     const t = theme();
     const rows = this.rows();
-    this.sel = Math.max(0, Math.min(this.sel, rows.length - 1));
-    const sel = rows[this.sel];
-    this.scroll.scroll_to_item(this.sel);
+    const sel = this.selected(rows);
+    const at = rows.indexOf(sel);
+    // Bring the selection into view when it changes, not on every redraw (the timer
+    // redraws every 1.5 s, which would undo scrolling the list with the mouse).
+    if (sel && sel.key !== this.scrolledTo) { this.scrolledTo = sel.key; this.scroll.scroll_to_item(at); }
     const hint = (k, d) => h_flex().gap(4).child(div().font_bold().text_color(t.accent).child(k)).child(div().text_color(t.muted).child(d));
     const dot = () => div().text_color(t.dim).child("·");
     const lines = sel ? this.preview[sel.key] ?? [] : [];
@@ -241,7 +317,7 @@ export default class Sessions extends View {
       const on = this.source === s.key;
       sources.child(h_flex().id(`src-${s.key}`).gap(4).items_center().cursor_pointer()
         .text_color(on ? t.accent : t.muted).when(on, (el) => el.font_bold())
-        .on_click((_e, cx) => { this.source = s.key; this.sel = 0; if (s.key === "remote") this.loadRemote(cx); this.refresh(cx); cx.notify(); })
+        .on_click((_e, cx) => { this.source = s.key; this.selKey = null; if (s.key === "remote") this.loadRemote(cx); this.refresh(cx); cx.notify(); })
         .when(!!s.icon, (el) => el.child(svg(L.ICON(s.icon)).size(11).text_color(on ? t.accent : t.muted)))
         .child(s.label));
     });
@@ -268,12 +344,12 @@ export default class Sessions extends View {
           .child(
             v_flex().when(this.showPreview, (el) => el.w("40%").border_r(1).border_color(t.border).pr(6)).when(!this.showPreview, (el) => el.flex_1())
               .h_full().min_h(0)
-              .child(v_flex().id("ss-list").flex_1().min_h(0).overflow_y_scrollbar().track_scroll(this.scroll).children(rows.map((r, i) => {
-                const on = i === this.sel;
+              .child(v_flex().id("ss-list").flex_1().min_h(0).overflow_y_scrollbar().track_scroll(this.scroll).children(rows.map((r) => {
+                const on = r.key === sel?.key;
                 return h_flex().id(`ss-${r.key}`).w_full().gap(8).items_center().pl(on ? 7 : 10).pr(8).py(1).cursor_pointer()
                   .when(on, (el) => el.bg(t.selected).border_l(3).border_color(t.accent))
                   .hover((s) => (on ? s : s.bg(t.hover)))
-                  .on_click((ev, cx) => { if (ev.click_count > 1 || on) this.connect(r); else { this.sel = i; this.refresh(cx); cx.notify(); } })
+                  .on_click((ev, cx) => { if (ev.click_count > 1 || on) this.connect(r); else { this.selKey = r.key; this.refresh(cx); cx.notify(); } })
                   .child(this.icon(t, r))
                   .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).when(r.kind === "space" && r.space.active, (d) => d.font_bold()).child(r.name))
                   .when(r.status === "blocked", (el) => el.child(div().text_color(t.blocked).text_size(11).child("needs you")));

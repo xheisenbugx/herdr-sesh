@@ -4,7 +4,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { run, theme, props, closeOverlay, hc, exec, focused, settings } from "herdr";
+import { run, theme, props, closeOverlay, hc, exec, focused, settings, spaces } from "herdr";
 import * as L from "./lib.js";
 
 const KEYS = [
@@ -37,7 +37,11 @@ export default class Agents extends View {
     this.open = { working: true, snoozed: false, settled: false };
     this.diff = false;
     this.help = false;
-    this.replying = false;
+    this.replying = null; // the address you're replying to (set by ctrl-o), else null
+    this.busy = false;
+    this.wheel = 0;
+    this.scrolledTo = null;
+    this.shelfScroll = ScrollHandle.new();
     this.screen = {};
     this.diffs = {};
     this.offset = 0;
@@ -53,10 +57,11 @@ export default class Agents extends View {
     this.input.on("submit", (_e, cx) => {
       const th = this.current();
       if (this.replying) {
+        // To the agent you pressed ctrl-o on, wherever the selection has gone since.
+        const to = L.threads().all.find((x) => x.address === this.replying);
         const text = this.input.value();
-        this.replying = false;
-        this.input.set_value(this.filter);
-        if (th) cx.spawn(async () => L.reply(th, text));
+        this.endReply();
+        if (to) cx.spawn(async () => L.reply(to, text));
         cx.notify();
         return;
       }
@@ -71,6 +76,13 @@ export default class Agents extends View {
   }
 
   close() { closeOverlay(props().overlay); }
+  // Back to filtering: the box gets the filter again (while still "replying", so the
+  // change event this fires doesn't reset the selection).
+  endReply() {
+    this.input.set_value(this.filter);
+    this.replying = null;
+  }
+  machineOf(th) { return spaces().find((p) => p.id === th.space)?.machine ?? null; }
 
   model() { return L.threads({ filter: this.filter }); }
   items(m) {
@@ -86,21 +98,36 @@ export default class Agents extends View {
 
   refresh(cx) {
     const th = this.current();
-    if (!th || th.closed) return;
+    // One look at a time: a big diff can take longer than the 1 s timer.
+    if (!th || th.closed || this.busy) return;
+    this.busy = true;
     cx.spawn(async (cx) => {
-      if (this.diff) {
-        if (!th.cwd) return;
-        try {
-          const stat = await exec("git", ["diff", "HEAD", "--stat"], { cwd: th.cwd, timeout: 5000 });
-          const body = await exec("git", ["diff", "HEAD"], { cwd: th.cwd, timeout: 5000 });
-          this.diffs[th.address] = (stat.stdout + "\n" + body.stdout).split("\n");
-        } catch { this.diffs[th.address] = ["(no diff)"]; }
-      } else {
-        const r = await hc(["read", th.address, "--lines", "400"]);
-        if (r.code === 0) this.screen[th.address] = L.screenLines(r.stdout);
+      try {
+        if (this.diff) {
+          if (!th.cwd) { this.diffs[th.address] = ["(no folder)"]; return; }
+          // On the agent's own machine: its folder is a path there.
+          const on = this.machineOf(th);
+          try {
+            const stat = await exec("git", ["diff", "HEAD", "--stat"], { cwd: th.cwd, on, timeout: 5000 });
+            if (stat.code !== 0) { this.diffs[th.address] = [stat.stderr.trim() || "(not a git repository)"]; return; }
+            const body = await exec("git", ["diff", "HEAD"], { cwd: th.cwd, on, timeout: 5000 });
+            const text = (stat.stdout + "\n" + body.stdout).trim();
+            this.diffs[th.address] = text ? text.split("\n") : ["(no changes)"];
+          } catch { this.diffs[th.address] = ["(couldn't read the diff)"]; }
+        } else {
+          const r = await hc(["read", th.address, "--lines", "400"]);
+          if (r.code === 0) this.screen[th.address] = L.screenLines(r.stdout);
+        }
+      } finally {
+        this.busy = false;
+        cx.notify();
       }
-      cx.notify();
     });
+  }
+  // How far the preview can scroll: past its last line there's nothing to show.
+  maxOffset(th) {
+    const lines = (th && (this.diff ? this.diffs[th.address] : this.screen[th.address])) ?? [];
+    return Math.max(0, lines.length - this.previewRows);
   }
 
   move(items, d) {
@@ -120,24 +147,24 @@ export default class Agents extends View {
     const a = e.modifiers.alt;
     if (this.help) { this.help = false; }
     else if (k === "escape") {
-      if (this.replying) { this.replying = false; this.input.set_value(this.filter); }
+      if (this.replying) this.endReply();
       else return this.close();
     }
-    else if (k === "down" || (c && (k === "n" || k === "j"))) this.move(items, 1);
-    else if (k === "up" || (c && (k === "p" || k === "k"))) this.move(items, -1);
+    else if (k === "down" || (c && (k === "n" || k === "j"))) { this.move(items, 1); this.refresh(cx); }
+    else if (k === "up" || (c && (k === "p" || k === "k"))) { this.move(items, -1); this.refresh(cx); }
     else if (k === "enter" && it?.shelf) { this.open[it.shelf] = !this.open[it.shelf]; }
     else if (c && k === "y" && th) cx.spawn(async () => L.approve(th));
     else if (c && k === "x" && th) cx.spawn(async () => L.deny(th));
-    else if (c && k === "o" && th) { this.replying = true; this.input.set_value(""); this.input.focus(); }
+    else if (c && k === "o" && th && !th.closed) { this.replying = th.address; this.input.set_value(""); this.input.focus(); }
     else if (c && k === "s" && th) cx.spawn(async () => L.markSeen(th));
-    else if (c && k === "g") { this.diff = !this.diff; this.offset = 0; this.refresh(cx); }
+    else if (c && k === "g") { this.diff = !this.diff; this.offset = 0; this.busy = false; this.refresh(cx); }
     else if (c && (k === "d" || k === "u")) {
       const half = Math.floor(this.previewRows / 2);
       const down = k === "d";
       // The screen counts back from its last line; the diff counts down from its first.
-      this.offset = Math.max(0, this.offset + (this.diff === down ? half : -half));
+      this.offset = Math.max(0, Math.min(this.maxOffset(th), this.offset + (this.diff === down ? half : -half)));
     }
-    else if (a && (k === "space" || k === "m")) { const pr = th?.cwd ? this.facts.git[th.cwd]?.pr ?? null : null; this.close(); L.openMenu(th, { from: "picker", pr }); return; }
+    else if (a && (k === "space" || k === "m")) { const pr = th ? this.facts.of(th).git?.pr ?? null : null; this.close(); L.openMenu(th, { from: "picker", pr }); return; }
     else if (a && k === "p" && th) L.togglePin(th);
     else if (a && k === "s" && th) L.toggleSettle(th);
     else if (a && k === "z" && th) L.snooze(th, Date.now() + 3600e3);
@@ -164,7 +191,7 @@ export default class Agents extends View {
     const th = this.current();
 
     const list = [];
-    let selChild = -1;
+    let selChild = -1, selShelf = -1;
     const row = (x) => {
       if (x.address === this.sel) selChild = list.length;
       const f = this.facts.of(x);
@@ -182,6 +209,7 @@ export default class Agents extends View {
       const key = `shelf:${s.key}`;
       const on = this.sel === key;
       const isOpen = this.open[s.key] || !!this.filter;
+      if (on) selShelf = shelves.length;
       shelves.push(h_flex().id(key).pl(on ? 7 : 10).pr(10).py(2).gap(6).items_center().cursor_pointer()
         .when(on, (el) => el.bg(t.selected).border_l(3).border_color(t.accent))
         .hover((st) => (on ? st : st.bg(t.hover)))
@@ -191,13 +219,20 @@ export default class Agents extends View {
         .child(div().flex_1().child(s.label))
         .child(div().text_color(t.muted).child(String(m[s.key].length))));
       if (isOpen) for (const x of m[s.key]) {
+        if (x.address === this.sel) selShelf = shelves.length;
         const f = this.facts.of(x);
         shelves.push(L.threadRow(t, x, { selected: x.address === this.sel, now, need: f.need, git: f.git, id: `as-${x.address}`, wide: true,
           onMenu: () => { this.close(); L.openMenu(x, { from: "picker", pr: f.git?.pr ?? null }); },
           onClick: (ev, cx) => { if (ev.click_count > 1) { this.close(); L.go(x); } else { this.sel = x.address; this.offset = 0; this.refresh(cx); cx.notify(); } } }));
       }
     }
-    if (selChild >= 0) this.scroll.scroll_to_item(selChild);
+    // Bring the selection into view when it changes, not on every redraw (the timer
+    // redraws every second, which would undo scrolling the list with the mouse).
+    if (this.sel !== this.scrolledTo) {
+      this.scrolledTo = this.sel;
+      if (selChild >= 0) this.scroll.scroll_to_item(selChild);
+      if (selShelf >= 0) this.shelfScroll.scroll_to_item(selShelf);
+    }
 
     const badge = (icon, color, n) => h_flex().gap(3).items_center().text_color(color).child(svg(L.ICON(icon)).size(11).text_color(color)).child(String(n));
     const hint = (k, d) => h_flex().gap(4).child(div().font_bold().text_color(t.accent).child(k)).child(div().text_color(t.muted).child(d));
@@ -222,14 +257,14 @@ export default class Agents extends View {
         .when(m.counts.working > 0, (el) => el.child(badge("working", t.working, m.counts.working)))
         .when(m.counts.done > 0, (el) => el.child(badge("check", t.done, m.counts.done))))
       .child(h_flex().items_center().gap(6).pt(2).pb(8)
-        .child(div().text_color(t.accent).font_bold().child(this.replying ? `reply to ${th?.title ?? ""} ›` : "›"))
+        .child(div().text_color(t.accent).font_bold().child(this.replying ? `reply to ${m.all.find((x) => x.address === this.replying)?.title ?? ""} ›` : "›"))
         .child(Input.new(this.input).flex_1().text_size(13).text_color(t.foreground)))
       .child(
         h_flex().flex_1().min_h(0).items_start()
           .child(
             v_flex().w("46%").h_full().min_h(0).pr(10).border_r(1).border_color(t.border)
               .child(v_flex().id("ag-list").flex_1().min_h(0).overflow_y_scrollbar().track_scroll(this.scroll).children(list))
-              .child(v_flex().id("ag-shelves").flex_none().max_h("45%").overflow_y_scrollbar().pt(6).border_t(1).border_color(t.border).children(shelves)),
+              .child(v_flex().id("ag-shelves").flex_none().max_h("45%").overflow_y_scrollbar().track_scroll(this.shelfScroll).pt(6).border_t(1).border_color(t.border).children(shelves)),
           )
           .child(this.help ? this.keysView(t) : this.preview(t, th)),
       )
@@ -289,10 +324,17 @@ export default class Agents extends View {
             if (r !== this.previewRows) { this.previewRows = r; cx.notify(); }
           })
           .on_scroll_wheel((e, cx) => {
-            const d = Math.round(-e.delta.y / 18);
-            this.offset = Math.max(0, this.offset + (this.diff ? -d : d));
+            // A negative delta scrolls down (as in Herdr's own lists). Small trackpad
+            // steps add up until they make a whole line.
+            this.wheel += e.delta_lines?.y ?? e.delta.y / 18;
+            const n = Math.trunc(this.wheel);
+            this.wheel -= n;
+            if (n) {
+              // The screen counts back from its last line; the diff counts down from its first.
+              this.offset = Math.max(0, Math.min(this.maxOffset(th), this.offset + (this.diff ? -n : n)));
+              cx.notify();
+            }
             cx.stop_propagation();
-            cx.notify();
           })
           .children(shown.map((l, n) => div().id(`pl-${n}`).whitespace_nowrap().overflow_hidden().text_color(color(l)).child(l || " "))),
       );
