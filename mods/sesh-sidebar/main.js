@@ -152,7 +152,8 @@ export default class Sidebar extends View {
     L.openMenu(th, { at, from: "sidebar", pr: th?.cwd ? this.facts.git[th.cwd]?.pr ?? null : null });
   }
   act(name, th, cx) {
-    if (name === "snooze1h") L.snooze(th, Date.now() + 3600e3);
+    // Snooze asks how long, with the same list as `z` and the actions menu.
+    if (name === "snooze") L.openMenu(th, { from: "sidebar", view: "snooze" });
     else L.runAction(name, th);
     cx?.notify();
   }

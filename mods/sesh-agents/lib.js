@@ -589,7 +589,7 @@ export function threadRow(t, th, { selected = false, need = null, git = null, no
         .child(div().flex_1().min_w(0).truncate().text_color(th.closed ? t.muted : t.foreground).when(selected || th.unread || th.status === "blocked", (d) => d.font_bold()).child(th.title))
         .when(showButtons, (el) => el
           .child(button("togglePin", "pin", "pin", th.pinned))
-          .child(button(th.snoozed ? "wake" : "snooze1h", th.snoozed ? "sun" : "clock", "snooze"))
+          .child(button(th.snoozed ? "wake" : "snooze", th.snoozed ? "sun" : "clock", "snooze"))
           .child(button("toggleSettle", th.settled ? "undo" : "box", "settle")))
         .when(!showButtons, (el) => el
           .child(div().flex_none().text_color(t.dim).child(age(now - th.at)))
