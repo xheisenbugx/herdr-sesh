@@ -125,7 +125,7 @@ The picker opens every agent in one big window, with the selected agent's live s
 | `ctrl-d` / `ctrl-u` | scroll the preview |
 | `alt-p` `alt-s` `alt-z` `alt-e` | pin, settle, snooze for an hour, wake |
 | `alt-b` | open its pull request |
-| `alt-w` | close its pane |
+| `alt-w` | close its pane (press it twice) |
 | `alt-space` / `alt-m` | its actions menu |
 | `f1` | every key |
 
@@ -214,7 +214,7 @@ The actions menu lists everything you can do to a thread, each item with its sid
 | `P` | open its pull request |
 | `n` / `N` | new thread / new thread in a new worktree |
 | `R` | rename the thread |
-| `X` | close its pane (or forget a closed thread) |
+| `X` | close its pane (press it twice), or forget a closed thread |
 | `A` | archive: remove its worktree |
 | `space` / `m` / right click | the actions menu |
 | `/` | filter |

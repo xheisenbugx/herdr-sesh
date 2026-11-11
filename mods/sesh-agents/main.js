@@ -18,7 +18,7 @@ const KEYS = [
   ["ctrl-d / ctrl-u", "scroll the preview"],
   ["alt-p alt-s alt-z alt-e", "pin, settle, snooze 1h, wake"],
   ["alt-b", "open its pull request"],
-  ["alt-w", "close its pane (forget a closed thread)"],
+  ["alt-w", "close its pane (press twice; forgets a closed thread)"],
   ["alt-space / alt-m", "its actions, by the sidebar's letters"],
   ["↑ ↓ / ctrl-n ctrl-p", "move"],
   ["f1", "every key"],

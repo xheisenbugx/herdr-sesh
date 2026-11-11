@@ -17,7 +17,7 @@
 //   undo:     { settled, snoozed, pins } one step back
 
 import { svg, div } from "gpui-kit";
-import { agents, panes, spaces, terminals, focused, shared, setShared, run, hc, exec, openOverlay } from "herdr";
+import { agents, panes, spaces, terminals, focused, shared, setShared, run, hc, exec, openOverlay, machines, notify, layout } from "herdr";
 
 export const ICON = (name) => `mods/sesh-sidebar/${name}.svg`;
 export const WEEK = 7 * 86400000;
@@ -30,24 +30,53 @@ export function state() {
     sessions: {}, missing: {}, closed: {}, undo: null, ...s,
   };
 }
+// The maps an undoable action changes. Undo puts back only the entries that action
+// changed, so whatever happened since (an agent quitting, another snooze ending) stays.
+const UNDOABLE = ["settled", "snoozed", "closed"];
 export function patch(fn, { undo = false } = {}) {
   const s = state();
-  const before = { settled: { ...s.settled }, snoozed: { ...s.snoozed }, pins: [...s.pins], closed: { ...s.closed } };
   const next = fn({
     ...s, settled: { ...s.settled }, snoozed: { ...s.snoozed }, pins: [...s.pins], changed: { ...s.changed },
     merged: { ...s.merged }, history: [...s.history], sessions: { ...s.sessions }, missing: { ...s.missing }, closed: { ...s.closed },
   }) ?? s;
-  if (undo) next.undo = before;
+  if (undo) {
+    const was = {};
+    for (const key of UNDOABLE) {
+      was[key] = {};
+      for (const k of new Set([...Object.keys(s[key]), ...Object.keys(next[key])])) {
+        if (JSON.stringify(s[key][k]) !== JSON.stringify(next[key][k])) was[key][k] = s[key][k] ?? null;
+      }
+    }
+    // Pins: the addresses this action pinned or unpinned, and whether each was pinned.
+    const before = new Set(s.pins), after = new Set(next.pins);
+    was.pins = {};
+    for (const a of new Set([...before, ...after])) if (before.has(a) !== after.has(a)) was.pins[a] = { pinned: before.has(a), at: s.pins.indexOf(a) };
+    next.undo = was;
+  }
   setShared("sesh", next);
 }
 export function undo() {
   const s = state();
-  if (!s.undo) return false;
   const u = s.undo;
-  // Pins are also Herdr's terminal label: put those back too.
-  const was = new Set(u.pins);
-  for (const a of agents()) if (a.pinned !== was.has(a.address)) run("terminal.pin", { terminal: a.address, pinned: was.has(a.address) });
-  setShared("sesh", { ...s, ...u, closed: u.closed ?? s.closed, undo: null });
+  if (!u || !u.pins || Array.isArray(u.pins)) return false; // (an undo saved by an older version: nothing safe to do)
+  const next = { ...s, undo: null };
+  for (const key of UNDOABLE) {
+    next[key] = { ...s[key] };
+    for (const [k, v] of Object.entries(u[key] ?? {})) {
+      if (v === null) delete next[key][k];
+      else next[key][k] = v;
+    }
+  }
+  const pins = [...s.pins];
+  for (const [a, w] of Object.entries(u.pins)) {
+    const i = pins.indexOf(a);
+    if (i >= 0) pins.splice(i, 1);
+    if (w.pinned) pins.splice(Math.max(0, Math.min(w.at, pins.length)), 0, a);
+    // Pins are also Herdr's terminal label: put back only the ones this action changed.
+    if (agents().some((x) => x.address === a)) run("terminal.pin", { terminal: a, pinned: w.pinned });
+  }
+  next.pins = pins;
+  setShared("sesh", next);
   return true;
 }
 
@@ -55,6 +84,8 @@ export function undo() {
 // waiting wakes from a snooze; one that starts working again (you sent it a
 // prompt) leaves Settled. A live agent that's gone for a while becomes a
 // closed thread you can resume. Call it from one place (sesh-bar) so writes don't race.
+// When this copy of the code started: right after a launch, agents take a moment to show up.
+const BOOT = Date.now();
 export function track(now = Date.now()) {
   const s = state();
   let dirty = false;
@@ -87,11 +118,14 @@ export function track(now = Date.now()) {
     history = [here, ...history.filter((x) => x !== here)].slice(0, 20);
     dirty = true;
   }
-  // An agent whose terminal went (or whose program quit) is a closed thread after 15 s
-  // (the list is empty for a moment while Herdr starts, so wait for agents to show first).
-  if (list.length || now - (s.startedAt ?? now) > 30000) {
+  // An agent whose terminal went (or whose program quit) is a closed thread after 15 s.
+  // Not in the first 30 s after a launch (agents are still showing up), and not while its
+  // machine is loading or offline (its agents are just out of sight, still running).
+  if (now - BOOT > 30000) {
+    const ready = new Set(machines().filter((m) => m.layout === "ready").map((m) => m.name));
     for (const [addr, sess] of Object.entries(sessions)) {
       if (live.has(addr)) continue;
+      if (sess?.machine && !ready.has(sess.machine)) { if (missing[addr]) { delete missing[addr]; dirty = true; } continue; }
       if (!missing[addr]) { missing[addr] = now; dirty = true; continue; }
       if (now - missing[addr] < 15000) continue;
       if (sess?.id) closed[sess.id] = { ...sess, at: changed[addr]?.at ?? now };
@@ -111,7 +145,7 @@ export function track(now = Date.now()) {
   for (const [id, c] of Object.entries(closed)) if (now - (c.at ?? 0) > 2 * WEEK) { delete closed[id]; dirty = true; }
   const pins = s.pins.filter((p) => live.has(p) || changed[p]);
   if (pins.length !== s.pins.length) dirty = true;
-  if (dirty) setShared("sesh", { ...s, changed, settled, snoozed, merged, missing, sessions, closed, history, pins, startedAt: s.startedAt ?? now });
+  if (dirty) setShared("sesh", { ...s, changed, settled, snoozed, merged, missing, sessions, closed, history, pins });
 }
 
 // Which conversation each Claude Code agent runs: its process writes
@@ -125,17 +159,21 @@ export async function captureSessions(homeDir, readTextFile) {
       const r = await hc(["get", a.address, "--json"]);
       if (r.code !== 0) continue;
       const pid = JSON.parse(r.stdout)?.foreground?.pid;
-      if (!pid) continue;
-      const text = await readTextFile(`${homeDir}/.claude/sessions/${pid}.json`);
+      if (!pid || !/^\d+$/.test(String(pid))) continue;
+      // The file is on the agent's machine, next to its process.
+      const machine = machineOf(a.space);
+      const text = machine
+        ? (await exec("sh", ["-c", 'cat "$HOME/.claude/sessions/$1.json"', "sh", String(pid)], { on: machine, timeout: 5000 }).catch(() => null))?.stdout || null
+        : await readTextFile(`${homeDir}/.claude/sessions/${pid}.json`);
       const id = text ? JSON.parse(text)?.sessionId : null;
       if (!id) continue;
       const p = panes().find((x) => x.pane === a.pane);
-      found[a.address] = { id, app: a.app, cwd: p?.cwd ?? JSON.parse(text)?.cwd ?? null, title: titleOf(a), space: a.space, spaceName: a.space_name };
+      found[a.address] = { id, app: a.app, cwd: p?.cwd ?? JSON.parse(text)?.cwd ?? null, title: titleOf(a), space: a.space, spaceName: a.space_name, machine };
     } catch {}
   }
   const same = Object.keys(found).every((k) => {
     const o = s.sessions[k];
-    return o && o.id === found[k].id && o.title === found[k].title && o.cwd === found[k].cwd && o.spaceName === found[k].spaceName;
+    return o && o.id === found[k].id && o.title === found[k].title && o.cwd === found[k].cwd && o.spaceName === found[k].spaceName && o.machine === found[k].machine;
   });
   const live = new Set(Object.values(found).map((x) => x.id));
   const reopened = Object.keys(s.closed).some((id) => live.has(id));
@@ -173,16 +211,23 @@ export function age(ms) {
 
 // Every thread, in the sidebar's sections. `filter` matches title, space or branch
 // fzf-style (letters in order); `space` keeps one space's threads.
+// The machine a space lives on (null: this computer).
+export function machineOf(spaceId) {
+  return spaces().find((p) => p.id === spaceId)?.machine ?? null;
+}
+
 export function threads({ filter = "", space = null, now = Date.now() } = {}) {
   const s = state();
   const paneOf = new Map(panes().map((p) => [p.pane, p]));
+  const machineOfSpace = new Map(spaces().map((p) => [p.id, p.machine ?? null]));
   const fz = fuzzy(filter);
   const liveIds = new Set(Object.values(s.sessions).map((x) => x?.id));
   const closed = Object.values(s.closed)
-    .filter((c) => c?.id && !liveIds.has(c.id))
+    // Just resumed: out of sight while it starts (it's dropped once it's seen running).
+    .filter((c) => c?.id && !liveIds.has(c.id) && !(c.resumedAt && now - c.resumedAt < 60000))
     .map((c) => ({
       a: null, closed: true, id: c.id, app: c.app, address: `closed:${c.id}`, title: c.title || "thread",
-      space: c.space, spaceName: c.spaceName ?? "", branch: null, cwd: c.cwd ?? null, status: "idle",
+      space: c.space, machine: c.machine ?? null, spaceName: c.spaceName ?? "", branch: null, cwd: c.cwd ?? null, status: "idle",
       unread: false, at: c.at ?? 0, pinned: false, settled: true, snoozed: null,
     }));
   const all = agents()
@@ -196,6 +241,7 @@ export function threads({ filter = "", space = null, now = Date.now() } = {}) {
         address: a.address,
         title: titleOf(a),
         space: a.space,
+        machine: machineOfSpace.get(a.space) ?? null,
         spaceName: a.space_name,
         branch: p?.branch ?? null,
         cwd: p?.cwd ?? null,
@@ -254,8 +300,11 @@ export function resume(t) {
   const argv = t.app === "codex" ? ["codex", "resume", t.id] : ["claude", "--resume", t.id];
   const folder = t.cwd ?? undefined;
   if (t.space && spaces().some((p) => p.id === t.space)) run("tab.new", { space: t.space, ...(folder ? { folder } : {}), argv });
-  else run("space.new", { ...(folder ? { folder } : {}), argv });
-  patch((s) => { delete s.closed[t.id]; return s; });
+  // Its space is gone: a new one on the machine it ran on (its folder is a path there).
+  else run("space.new", { ...(folder ? { folder } : {}), machine: t.machine ?? "", argv });
+  // Kept, but hidden for a minute: once it's running it's dropped for good; if it failed to
+  // start, it comes back so it can be tried again.
+  patch((s) => { if (s.closed[t.id]) s.closed[t.id] = { ...s.closed[t.id], resumedAt: Date.now() }; return s; });
 }
 export function forget(t) {
   if (!t?.closed) return;
@@ -280,7 +329,8 @@ export async function deny(t) {
 // view that asked (a popup) closes right after.
 export async function reply(t, text) {
   if (!t || t.closed || !text.trim()) return;
-  const script = 'if [ "$3" = blocked ]; then hc keys "$1" esc; sleep 0.4; fi; exec hc send --force "$1" "$2"';
+  // "--": a reply that starts with "-" is text, not one of hc's options.
+  const script = 'if [ "$3" = blocked ]; then hc keys "$1" esc; sleep 0.4; fi; exec hc send --force "$1" -- "$2"';
   await exec("sh", ["-c", script, "sh", t.address, text, t.status], { timeout: 120000 }).catch(() => {});
 }
 export function togglePin(t) {
@@ -305,38 +355,61 @@ export function movePin(t, delta) {
     return s;
   });
 }
+// Settling or snoozing a pinned thread unpins it: it moves to its shelf, as pinning one
+// takes it off its shelf.
+function unpin(s, t) {
+  if (!t.pinned) return;
+  s.pins = s.pins.filter((p) => p !== t.address);
+  run("terminal.pin", { terminal: t.address, pinned: false });
+}
 export function toggleSettle(t) {
   if (!t || t.closed) return;
   patch((s) => {
     if (s.settled[t.address] || t.settled) { delete s.settled[t.address]; s.changed[t.address] = { s: t.status === "done" ? "idle" : t.status, at: Date.now() }; }
-    else { s.settled[t.address] = Date.now(); delete s.snoozed[t.address]; }
+    else { s.settled[t.address] = Date.now(); delete s.snoozed[t.address]; unpin(s, t); }
     return s;
   }, { undo: true });
 }
 export function snooze(t, until) {
-  if (!t || t.closed) return;
-  patch((s) => { s.snoozed[t.address] = until; delete s.settled[t.address]; return s; }, { undo: true });
+  if (!t || t.closed || !(until > Date.now())) return;
+  patch((s) => { s.snoozed[t.address] = until; delete s.settled[t.address]; unpin(s, t); return s; }, { undo: true });
 }
 export function wake(t) {
   if (!t || t.closed) return;
   patch((s) => { delete s.snoozed[t.address]; delete s.settled[t.address]; s.changed[t.address] = { s: t.status === "done" ? "idle" : t.status, at: Date.now() }; return s; }, { undo: true });
 }
-export function closeThread(t) {
+// Closing an agent's pane ends it and can't be undone: from a key it takes a second press
+// within 3 s (the menu's item is already a deliberate choice).
+let armed = null;
+export function closeThread(t, { confirmed = false } = {}) {
   if (!t) return;
   if (t.closed) return forget(t);
+  const now = Date.now();
+  if (!confirmed && !(armed && armed.address === t.address && now - armed.at < 3000)) {
+    armed = { address: t.address, at: now };
+    notify({ title: `Press again to close "${t.title}"`, body: "Its agent stops and the pane closes.", level: "warning", timeout: 3000 });
+    return;
+  }
+  armed = null;
   run("pane.close", { pane: t.a.pane });
 }
 export function review(t) {
-  if (!t?.cwd) return;
+  if (!t?.cwd || t.closed) return;
   // Everything since the branch left its base, committed or not, as its pull request will show it.
   const script = 'b=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo main); ' +
     'm=$(git merge-base HEAD "$b" 2>/dev/null || echo HEAD); git --no-pager log --oneline "$m"..HEAD; echo; ' +
-    'git --no-pager diff --stat "$m"; echo; git diff "$m"; exec "${SHELL:-/bin/zsh}" -l';
-  run("terminal.open", { argv: ["sh", "-c", script], folder: t.cwd, place: "right" });
+    'git --no-pager diff --stat "$m"; echo; git diff "$m"; exec "${SHELL:-/bin/sh}" -l';
+  // Split beside the agent, so it runs on the agent's machine, in its folder.
+  run("pane.split", { pane: t.a.pane, direction: "right", argv: ["sh", "-c", `cd "$1" || exit 1; ${script}`, "sh", t.cwd] });
 }
 export function openPR(t) {
   if (!t?.cwd) return;
-  exec("gh", ["pr", "view", "--web"], { cwd: t.cwd }).catch(() => {});
+  const on = t.machine ?? null;
+  if (!on) return void exec("gh", ["pr", "view", "--web"], { cwd: t.cwd }).catch(() => {});
+  // On another machine: ask there for the PR's address, open it here.
+  exec("gh", ["pr", "view", "--json", "url", "-q", ".url"], { cwd: t.cwd, on, timeout: 8000 })
+    .then((r) => { const url = r.stdout.trim(); if (r.code === 0 && /^https:\/\//.test(url)) return exec("open", [url]); })
+    .catch(() => {});
 }
 export function newThread(t) {
   const space = t?.space && spaces().some((p) => p.id === t.space) ? t.space : focused()?.space;
@@ -384,7 +457,7 @@ export function threadMenu(t, { pr = null, pinnedCount = 0 } = {}) {
   items.push(["plus", "New thread…", "n", "newThread"]);
   if (t.cwd) items.push(["branch", "New in a worktree…", "N", "newWorktreeThread"]);
   items.push(["more", "Sidebar", "›", "more"], ["sep"]);
-  items.push(["x", "Close pane…", "X", "closeThread", true]);
+  items.push(["x", "Close pane", "X", "closeThreadNow", true]);
   if (t.branch && !MAIN.test(t.branch)) items.push(["box", "Archive worktree…", "A", "archive", true]);
   return items;
 }
@@ -410,9 +483,19 @@ export function runAction(name, t) {
   if (name === "pinUp") return movePin(t, -1);
   if (name === "pinDown") return movePin(t, 1);
   if (name === "undo") return undo();
-  if (name.startsWith("view:")) return run(`sesh-sidebar.${name.slice(5)}`);
+  if (name === "closeThreadNow") return closeThread(t, { confirmed: true });
+  if (name.startsWith("view:")) {
+    // The sidebar only hears its commands while it's shown.
+    if (findNode(layout(), "sidebar")?.hidden && name !== "view:hide") run("layout.show", { id: "sidebar" });
+    return run(`sesh-sidebar.${name.slice(5)}`);
+  }
   const f = plain[name];
   if (f) return f(t);
+}
+function findNode(node, id) {
+  if (node?.id === id) return node;
+  for (const c of node?.children ?? []) { const f = findNode(c, id); if (f) return f; }
+  return null;
 }
 // Opens the actions menu for a thread (or the sidebar's own, with none).
 export function openMenu(t, { at = "pointer", from = "sidebar", pr = null, view = "main" } = {}) {
@@ -444,8 +527,9 @@ export function parseWhen(text, now = new Date()) {
   const s = (text ?? "").trim().toLowerCase();
   if (!s) return null;
   let m = s.match(/^(\d+)\s*(m|min|h|d)$/);
-  if (m) return now.getTime() + Number(m[1]) * { m: 60e3, min: 60e3, h: 3600e3, d: 86400e3 }[m[2]];
+  if (m) return Number(m[1]) > 0 ? now.getTime() + Number(m[1]) * { m: 60e3, min: 60e3, h: 3600e3, d: 86400e3 }[m[2]] : null;
   m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (m && (Number(m[1]) > 23 || Number(m[2]) > 59)) return null;
   if (m) {
     const x = new Date(now); x.setHours(Number(m[1]), Number(m[2]), 0, 0);
     if (x.getTime() <= now.getTime()) x.setDate(x.getDate() + 1);
@@ -462,22 +546,27 @@ export async function needOf(address) {
   try {
     const r = await hc(["read", address]);
     if (r.code !== 0) return null;
-    const lines = screenLines(r.stdout).map((l) => l.replace(/[│╭╮╰╯─┃┏┓┗┛━]/g, "").trim());
-    const ask = lines.findLastIndex((l) => /^Do you want|^Would you like|\? *$/.test(l));
+    const raw = screenLines(r.stdout);
+    const lines = raw.map((l) => l.replace(/[│╭╮╰╯─┃┏┓┗┛━]/g, "").trim());
+    const ask = lines.findLastIndex((l) => /^(Do you want|Would you like)\b/.test(l));
     if (ask < 0) return null;
-    const body = lines.slice(Math.max(0, ask - 14), ask).filter(Boolean);
-    const kindIdx = body.findIndex((l) => /(command|file|fetch|search|tool|edit|write|read|create)$/i.test(l) || /^[A-Z][\w ]+$/.test(l));
-    if (kindIdx >= 0 && body[kindIdx + 1]) return `Allow ${body[kindIdx].replace(/ command$/i, "")}: ${body[kindIdx + 1]}`;
-    return lines[ask];
+    // The prompt's box starts at the nearest top border above the question; nothing
+    // above it (the conversation) counts. Its first lines are the kind and the detail.
+    let top = ask - 1;
+    while (top >= 0 && ask - top <= 20 && !/[╭┏]/.test(raw[top])) top--;
+    if (top < 0 || ask - top > 20) return null;
+    const body = lines.slice(top + 1, ask).filter(Boolean);
+    if (body[0] && body[1]) return `Allow ${body[0].replace(/ command$/i, "")}: ${body[1]}`;
+    return null;
   } catch {
     return null;
   }
 }
 
 // Ahead/behind its upstream, per folder.
-export async function aheadBehind(cwd) {
+export async function aheadBehind(cwd, on = null) {
   try {
-    const r = await exec("git", ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], { cwd, timeout: 4000 });
+    const r = await exec("git", ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], { cwd, on, timeout: 4000 });
     if (r.code !== 0) return null;
     const [behind, ahead] = r.stdout.trim().split(/\s+/).map(Number);
     return { ahead, behind };
@@ -485,9 +574,9 @@ export async function aheadBehind(cwd) {
     return null;
   }
 }
-export async function pullRequest(cwd) {
+export async function pullRequest(cwd, on = null) {
   try {
-    const r = await exec("gh", ["pr", "view", "--json", "number,state"], { cwd, timeout: 8000 });
+    const r = await exec("gh", ["pr", "view", "--json", "number,state"], { cwd, on, timeout: 8000 });
     if (r.code !== 0) return null;
     return JSON.parse(r.stdout);
   } catch {
@@ -545,7 +634,7 @@ export function threadRow(t, th, { selected = false, need = null, git = null, no
     if (th.closed) return [t.dim, "closed · ↵ resumes"];
     if (th.snoozed) return [t.muted, `snoozed until ${fmtTime(th.snoozed)}`];
     if (th.status === "blocked") return [t.blocked, need ?? "needs you"];
-    if (th.status === "working") return [t.muted, `› working ${age(now - th.at)}`];
+    if (th.status === "working") return [t.muted, th.at ? `› working ${age(now - th.at)}` : "› working"];
     if (th.status === "done") return [t.done, "finished"];
     return [t.dim, "idle"];
   })();
@@ -592,7 +681,7 @@ export function threadRow(t, th, { selected = false, need = null, git = null, no
           .child(button(th.snoozed ? "wake" : "snooze", th.snoozed ? "sun" : "clock", "snooze"))
           .child(button("toggleSettle", th.settled ? "undo" : "box", "settle")))
         .when(!showButtons, (el) => el
-          .child(div().flex_none().text_color(t.dim).child(age(now - th.at)))
+          .child(div().flex_none().text_color(t.dim).child(th.at ? age(now - th.at) : ""))
           .child(div().w(10).flex_none().text_color(t.accent).child(th.unread ? "●" : ""))),
     )
     .child(
@@ -616,12 +705,23 @@ export function fmtTime(ms) {
 // fresh for the threads a view shows. Owned by a view instance. A thread
 // whose PR merged is settled once (restoring it sticks).
 export class Facts {
-  constructor() { this.need = {}; this.git = {}; this.prAt = {}; }
+  constructor() { this.need = {}; this.git = {}; this.prAt = {}; this.busy = { needs: false, gits: false }; }
   start(cx, list) {
-    cx.timer.every(2500, (cx) => this.needs(cx, list()));
-    cx.timer.every(20000, (cx) => this.gits(cx, list()));
-    cx.spawn(async (cx) => { await this.needs(cx, list()); await this.gits(cx, list()); });
+    // Each tick starts its own task (a timer's cx isn't kept across an await), and a
+    // tick is skipped while the last one is still going.
+    cx.timer.every(2500, (cx) => this.once(cx, "needs", list));
+    cx.timer.every(20000, (cx) => this.once(cx, "gits", list));
+    cx.spawn(async (cx) => { await this.run(cx, "needs", list); await this.run(cx, "gits", list); });
   }
+  once(cx, name, list) {
+    if (!this.busy[name]) cx.spawn(async (cx) => this.run(cx, name, list));
+  }
+  async run(cx, name, list) {
+    if (this.busy[name]) return;
+    this.busy[name] = true;
+    try { await this[name](cx, list()); } finally { this.busy[name] = false; }
+  }
+  key(th) { return th.cwd ? `${th.machine ?? ""}:${th.cwd}` : null; }
   async needs(cx, ts) {
     let dirty = false;
     for (const th of ts) {
@@ -636,20 +736,32 @@ export class Facts {
     const seen = new Set();
     const now = Date.now();
     for (const th of ts) {
-      if (th.closed || !th.cwd || !th.branch || seen.has(th.cwd)) continue;
-      seen.add(th.cwd);
-      const g = (this.git[th.cwd] ??= {});
-      g.ab = await aheadBehind(th.cwd);
-      if (!MAIN.test(th.branch) && (!this.prAt[th.cwd] || now - this.prAt[th.cwd] > 120000)) {
-        this.prAt[th.cwd] = now;
-        g.pr = await pullRequest(th.cwd);
+      const key = this.key(th);
+      if (th.closed || !key || !th.branch || seen.has(key)) continue;
+      seen.add(key);
+      const g = (this.git[key] ??= {});
+      g.ab = await aheadBehind(th.cwd, th.machine);
+      // A new branch in the same folder is a new question: don't reuse the last answer.
+      if (g.branch !== th.branch) { g.pr = null; delete this.prAt[key]; }
+      g.branch = th.branch;
+      if (!MAIN.test(th.branch) && (!this.prAt[key] || now - this.prAt[key] > 120000)) {
+        this.prAt[key] = now;
+        g.pr = await pullRequest(th.cwd, th.machine);
+        g.prBranch = th.branch;
       }
     }
+    // A thread whose PR merged is settled, once; not one you haven't read yet.
     const s = state();
-    const merge = ts.filter((th) => !th.closed && th.cwd && this.git[th.cwd]?.pr?.state === "MERGED"
-      && !s.merged[th.address] && !th.settled && th.status !== "working" && th.status !== "blocked");
+    const merge = ts.filter((th) => {
+      const g = this.git[this.key(th)];
+      return !th.closed && g?.pr?.state === "MERGED" && g.prBranch === th.branch
+        && !s.merged[th.address] && !th.settled && !th.unread && th.status !== "working" && th.status !== "blocked";
+    });
     if (merge.length) patch((x) => { for (const th of merge) { x.merged[th.address] = true; x.settled[th.address] = now; } return x; });
     cx.notify();
   }
-  of(th) { return { need: this.need[th.address] ?? null, git: th.cwd ? this.git[th.cwd] ?? null : null }; }
+  of(th) {
+    const key = this.key(th);
+    return { need: this.need[th.address] ?? null, git: key ? this.git[key] ?? null : null };
+  }
 }
