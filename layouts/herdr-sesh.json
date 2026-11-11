@@ -68,7 +68,7 @@
               "id": "attention",
               "type": "block",
               "size": {
-                "px": 300
+                "px": 12
               },
               "window_drag": true,
               "content": {

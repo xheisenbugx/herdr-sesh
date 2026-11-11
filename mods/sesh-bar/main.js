@@ -37,6 +37,7 @@ export default class Bar extends View {
 
   // Status stamps, snooze expiry, and which space you were in before this one.
   tick() {
+    this.fit();
     L.track();
     const here = focused()?.space;
     const s = L.state();
@@ -122,14 +123,37 @@ export default class Bar extends View {
     }
   }
 
-  render() {
-    const t = theme();
+  // The other spaces with an agent waiting on you (first) or finished.
+  attention() {
     const here = focused()?.space;
     const others = spaces().filter((p) => p.id !== here && (p.status === "blocked" || p.status === "done"));
-    others.sort((a, b) => (b.status === "blocked") - (a.status === "blocked"));
+    return others.sort((a, b) => (b.status === "blocked") - (a.status === "blocked"));
+  }
+
+  // The strip's block is as wide as what it shows, so the tab bar's own buttons
+  // (+, Files, Changes) stay at the window's right edge when nothing needs you.
+  fit() {
+    if (!find(layout(), "attention")) return;
+    const others = this.attention();
+    const shown = others.slice(0, 4);
+    const px = shown.length
+      ? Math.min(420, Math.ceil(20 + shown.reduce((w, p) => w + 15 + Math.min(110, [...p.name].length * 7.3), 0) + 10 * (shown.length - 1) + (others.length > 4 ? 34 : 0)))
+      : 12;
+    if (px !== this.width) {
+      this.width = px;
+      run("layout.resize", { id: "attention", px });
+    }
+  }
+
+  render() {
+    const t = theme();
+    const others = this.attention();
     return h_flex()
       .id("sesh-bar")
       .size_full()
+      .bg(t.chrome)
+      .border_b(1)
+      .border_color(t.border)
       .px(10)
       .gap(10)
       .items_center()
