@@ -210,7 +210,7 @@ def hero():
     # tabs row
     s.rect(SB + 1, 0, W - SB - 1, 40, C["chrome"])
     tx = SB + 14
-    for name, act, st in (("api", True, "blocked"), ("server", False, None), ("+", False, None)):
+    for name, act, st in (("api", True, "blocked"), ("server", False, None)):
         tw = len(name) * CW + (40 if st else 20)
         if act:
             s.rect(tx - 6, 8, tw + 10, 24, C["raised"], rx=5)
@@ -221,10 +221,23 @@ def hero():
         else:
             s.text(tx, 25, name, C["muted"])
         tx += tw + 18
-    ax = W - 16
-    for nm, st in (("docs", "done"),):
-        ax = s.text(ax, 25, nm, C["done"], anchor="end") - len(nm) * CW * 2 - 18
-        s.icon("check", ax + 2, 14, 11, C["done"])
+    s.line(SB + 1, 40, W, 40)
+    # The attention strip at the far right (another space finished), then the
+    # tab bar's own buttons right before it: + , Files, Changes.
+    ax = W - 14
+    s.text(ax, 25, "docs", C["done"], anchor="end")
+    ax -= 4 * CW + 15
+    s.icon("check", ax, 14, 11, C["done"])
+    ax -= 22
+    s.text(ax, 25, "Changes", C["muted"], anchor="end")
+    ax -= 7 * CW + 17
+    s.icon("branch", ax, 14, 12, C["muted"])
+    ax -= 18
+    s.text(ax, 25, "Files", C["muted"], anchor="end")
+    ax -= 5 * CW + 16
+    s.add(f'<path d="M{ax+2} {14}h5l4 4v8h-9z M{ax+7} {14}v4h4" fill="none" stroke="{C["muted"]}" stroke-width="1.2" stroke-linejoin="round"/>')
+    ax -= 22
+    s.text(ax, 25, "+", C["dim"], anchor="end")
     # pane
     px, py, pw, ph = SB + 8, 44, W - SB - 16, H - 52
     s.rect(px, py, pw, ph, C["bg"], rx=6, stroke=C["accent"])
