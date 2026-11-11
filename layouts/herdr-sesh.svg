@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="200" viewBox="0 0 360 200">
+  <!-- herdr-sesh: ksesh's thread sidebar on the left, tabs and an attention strip on top -->
+  <rect x="1.5" y="1.5" width="357" height="197" rx="18" fill="#1e1d2d" stroke="#3a3852" stroke-width="3"/>
+  <path d="M120.5 3v194M122 34.5h235" stroke="#3a3852" stroke-width="3"/>
+  <path d="M16 30h40" stroke="#a48cf2" stroke-width="7" stroke-linecap="round"/>
+  <path d="M62 30h46" stroke="#a48cf2" stroke-opacity=".4" stroke-width="3" stroke-dasharray="3 4"/>
+  <rect x="10" y="58" width="102" height="26" rx="3" fill="#3b3363"/>
+  <rect x="10" y="58" width="4" height="26" fill="#a48cf2"/>
+  <circle cx="24" cy="66" r="4" fill="#f9e2af"/>
+  <path d="M34 66h56M34 77h40" stroke="#cdd6f4" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="24" cy="100" r="4" fill="#a6e3a1"/>
+  <path d="M34 100h60M34 111h34" stroke="#a6adc8" stroke-width="5" stroke-linecap="round"/>
+  <path d="M14 160h96" stroke="#3a3852" stroke-width="2"/>
+  <path d="M20 172h50M20 184h40" stroke="#6c7086" stroke-width="5" stroke-linecap="round"/>
+  <path d="M300 18h40" stroke="#f9e2af" stroke-width="6" stroke-linecap="round"/>
+  <rect x="132" y="44" width="216" height="144" rx="8" fill="#232236"/>
+  <path d="M146 64h120M146 80h84M146 96h150" stroke="#a6adc8" stroke-opacity=".5" stroke-width="5" stroke-linecap="round"/>
+</svg>

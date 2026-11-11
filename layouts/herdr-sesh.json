@@ -1,0 +1,109 @@
+{
+  "id": "root",
+  "type": "row",
+  "preview": "layouts/herdr-sesh.svg",
+  "theme": "herdr-sesh",
+  "ui_font": "JetBrains Mono",
+  "terminal_padding": [
+    10,
+    8
+  ],
+  "background": "canvas",
+  "titlebar": "none",
+  "traffic_lights": [
+    16,
+    14
+  ],
+  "divider": {
+    "width": 1,
+    "color": "border"
+  },
+  "children": [
+    {
+      "id": "sidebar",
+      "type": "column",
+      "size": {
+        "px": 340
+      },
+      "min": 220,
+      "max": 560,
+      "background": "chrome",
+      "children": [
+        {
+          "id": "threads",
+          "type": "block",
+          "window_drag": true,
+          "content": {
+            "mod": "sesh-sidebar"
+          }
+        }
+      ]
+    },
+    {
+      "id": "work",
+      "type": "column",
+      "resizable": false,
+      "background": "chrome",
+      "children": [
+        {
+          "id": "tabs-row",
+          "type": "row",
+          "size": {
+            "px": 38
+          },
+          "resizable": false,
+          "children": [
+            {
+              "id": "tabs",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "window_drag": true,
+              "content": {
+                "mod": "tabs"
+              }
+            },
+            {
+              "id": "attention",
+              "type": "block",
+              "size": {
+                "px": 300
+              },
+              "window_drag": true,
+              "content": {
+                "mod": "sesh-bar"
+              }
+            }
+          ]
+        },
+        {
+          "id": "main",
+          "type": "block",
+          "padding": [
+            0,
+            6
+          ],
+          "content": {
+            "tab": "active",
+            "pane": {
+              "gap": 6,
+              "radius": 6,
+              "background": "background",
+              "border": {
+                "width": 1,
+                "color": "border"
+              },
+              "focus": {
+                "width": 1,
+                "color": "accent"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "toast": "sesh-toast",
+  "terminal_menu": "sesh-term-menu"
+}

@@ -1,0 +1,51 @@
+{
+  "layout:herdr-sesh": {
+    "cmd-p": "mod.open:sesh-sessions",
+    "cmd-shift-p": "sesh-bar.last",
+    "cmd-alt-p": "app.palette",
+    "cmd-shift-r": "space.rename",
+    "cmd-a": "mod.open:sesh-agents",
+    "cmd-j": "sesh-bar.need-next",
+    "cmd-shift-j": "sesh-bar.agent-last",
+    "cmd-b": "layout.toggle:sidebar",
+    "cmd-shift-b": "sesh-bar.sidebar",
+    "cmd-ctrl-p": "sesh-bar.pin",
+    "cmd-ctrl-s": "sesh-bar.settle",
+    "cmd-ctrl-z": "sesh-bar.snooze",
+    "cmd-ctrl-w": "sesh-bar.wake",
+    "cmd-ctrl-j": "sesh-bar.thread-next",
+    "cmd-ctrl-k": "sesh-bar.thread-prev",
+    "cmd-t": "tab.new",
+    "cmd-enter": "pane.split:right",
+    "cmd-ctrl-1": "sesh-bar.thread:1",
+    "cmd-ctrl-2": "sesh-bar.thread:2",
+    "cmd-ctrl-3": "sesh-bar.thread:3",
+    "cmd-ctrl-4": "sesh-bar.thread:4",
+    "cmd-ctrl-5": "sesh-bar.thread:5",
+    "cmd-ctrl-6": "sesh-bar.thread:6",
+    "cmd-ctrl-7": "sesh-bar.thread:7",
+    "cmd-ctrl-8": "sesh-bar.thread:8",
+    "cmd-ctrl-9": "sesh-bar.thread:9",
+    "cmd-h": "tab.prev",
+    "cmd-l": "tab.next",
+    "cmd-w": "pane.close",
+    "cmd-z": "pane.zoom",
+    "cmd-i": "sesh-bar.pane-prev",
+    "cmd-o": "sesh-bar.pane-next",
+    "cmd--": "pane.split:down",
+    "cmd-shift-\\": "pane.split:right",
+    "cmd-|": "pane.split:right",
+    "cmd-d": "pane.split:right",
+    "cmd-shift-d": "pane.split:down",
+    "cmd-r": "tab.rename"
+  },
+  "mod:sesh-agents": {
+    "cmd-w": "overlay.close"
+  },
+  "mod:sesh-sessions": {
+    "cmd-w": "overlay.close"
+  },
+  "mod:sesh-menu": {
+    "cmd-w": "overlay.close"
+  }
+}
