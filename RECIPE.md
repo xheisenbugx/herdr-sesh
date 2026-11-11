@@ -1,6 +1,6 @@
 # herdr-sesh
 
-A keyboard-first layout for coding agents, ported from ksesh (a kitty session manager). A thread sidebar on the left sorts every agent into Pinned, Inbox and three folded shelves (Working, Snoozed, Settled). Each thread shows what the agent needs ("Allow Bash: npm test"), its branch and its PR. Two full-window pickers sit on `cmd-a` (agents, with the selected agent's live screen) and `cmd-p` (sessions: spaces, sesh configs, kitty session files, zoxide, other machines). Everything is monospace, dark purple and terminal-like.
+A keyboard-first layout for coding agents. A thread sidebar on the left sorts every agent into Pinned, Inbox and three folded shelves (Working, Snoozed, Settled). Each thread shows what the agent needs ("Allow Bash: npm test"), its branch and its PR. Two full-window pickers sit on `cmd-a` (agents, with the selected agent's live screen) and `cmd-p` (sessions: spaces, `[[session]]` entries from `~/.config/herdr-sesh/config.toml`, kitty session files, zoxide, other machines). Everything is monospace, dark purple and terminal-like.
 
 ![herdr-sesh](preview.png)
 

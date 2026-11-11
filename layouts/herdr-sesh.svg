@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="360" height="200" viewBox="0 0 360 200">
-  <!-- herdr-sesh: ksesh's thread sidebar on the left, tabs and an attention strip on top -->
+  <!-- herdr-sesh: the thread sidebar on the left, tabs and an attention strip on top -->
   <rect x="1.5" y="1.5" width="357" height="197" rx="18" fill="#1e1d2d" stroke="#3a3852" stroke-width="3"/>
   <path d="M120.5 3v194M122 34.5h235" stroke="#3a3852" stroke-width="3"/>
   <path d="M16 30h40" stroke="#a48cf2" stroke-width="7" stroke-linecap="round"/>

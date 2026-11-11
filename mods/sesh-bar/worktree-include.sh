@@ -1,5 +1,5 @@
 #!/bin/sh
-# ksesh's .worktreeinclude for Herdr's worktrees: run in a folder of a git worktree made in the
+# .worktreeinclude for Herdr's worktrees: run in a folder of a git worktree made in the
 # last 10 minutes, it copies what the main checkout's .worktreeinclude lists (paths and globs from
 # the repo root, "#" comments, "!" lines skipped, nothing outside the repo) into it. Nothing is
 # overwritten. Prints "@<worktree root>" first (the caller remembers it), then "copied <path>" lines.

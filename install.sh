@@ -7,14 +7,15 @@
 #   sh install.sh --uninstall   remove everything it installed, and its keys
 #
 # Or without cloning:
-#   curl -fsSL https://raw.githubusercontent.com/xheisenbugx/herdr-xheisenbugx/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/xheisenbugx/herdr-sesh/main/install.sh | sh
 #
 # Herdr's folder is ~/.config/herdr-app, or $HERDR_APP_HOME.
 set -eu
 
-REPO="https://github.com/xheisenbugx/herdr-xheisenbugx"
+REPO="https://github.com/xheisenbugx/herdr-sesh"
 APP="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
-MANIFEST="$APP/.herdr-xheisenbugx"
+MANIFEST="$APP/.herdr-sesh"
+CONFIG="$HOME/.config/herdr-sesh/config.toml"
 LAYOUT="herdr-sesh"
 
 force=0 switch=1 uninstall=0
@@ -32,6 +33,8 @@ say() { printf '\033[1;35m›\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ -d "$APP" ] || die "No Herdr folder at $APP. Install Herdr (https://herdr.dev) and open it once, then run this again."
+# Installs from before the repo was renamed kept their list under the old name.
+[ -f "$APP/.herdr-xheisenbugx" ] && [ ! -f "$MANIFEST" ] && mv "$APP/.herdr-xheisenbugx" "$MANIFEST"
 command -v python3 >/dev/null 2>&1 || die "python3 is needed to merge keys.json (on macOS: xcode-select --install)."
 herdr_app() { command -v herdr-app >/dev/null 2>&1 && herdr-app "$@"; }
 
@@ -71,6 +74,7 @@ if [ "$uninstall" = 1 ]; then
   done < "$MANIFEST"
   rm -f "$MANIFEST"
   [ "$(keys remove)" = updated ] && say "removed its keys from keys.json (backup next to it)"
+  [ -f "$CONFIG" ] && say "kept your settings in $CONFIG (delete it yourself if you want)"
   say "herdr-sesh is gone."
   exit 0
 fi
@@ -122,6 +126,13 @@ mv "$MANIFEST.tmp" "$MANIFEST"
 say "copied the layout, its theme and $(ls -d "$src"/mods/*/ | wc -l | tr -d ' ') mods into $APP"
 
 [ "$(keys add "$src/keys.json")" = updated ] && say "added the layout's keys to keys.json (your old one is kept as keys.json.bak-*)"
+
+# Its own settings file, from the commented example, only if you have none.
+if [ ! -f "$CONFIG" ]; then
+  mkdir -p "$(dirname "$CONFIG")"
+  cp "$src/config.example.toml" "$CONFIG"
+  say "wrote $CONFIG (all commented out: add your sessions there)"
+fi
 
 if command -v herdr-app >/dev/null 2>&1; then
   failed=0

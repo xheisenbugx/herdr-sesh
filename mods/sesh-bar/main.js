@@ -1,4 +1,4 @@
-// The right end of the herdr-sesh tab bar: ksesh's attention strip (the other
+// The right end of the herdr-sesh tab bar: the attention strip (the other
 // spaces with an agent waiting on you, or finished), and the receiver for the
 // layout's global keys (cmd-j, cmd-shift-p, cmd-ctrl-…), which keep working
 // with the sidebar hidden. It's also the one place that tracks thread state.
@@ -45,7 +45,7 @@ export default class Bar extends View {
 
   thread() { return L.currentThread(); }
 
-  // ksesh copied what .worktreeinclude lists into a new worktree; Herdr's worktree dialog
+  // Copies what .worktreeinclude lists into a new worktree: Herdr's worktree dialog
   // doesn't, so a terminal showing up in a fresh worktree gets it done here.
   async worktrees() {
     this.script ??= await readTextFile(`${appHome()}/mods/sesh-bar/worktree-include.sh`).catch(() => null);
@@ -84,7 +84,7 @@ export default class Bar extends View {
       const prev = L.state().prev;
       if (prev && spaces().some((p) => p.id === prev)) run("space.select", { id: prev });
     } else if (name === "agent-last") {
-      // ksesh agent last: back to the agent you were with before this one.
+      // Back to the agent you were with before this one.
       const here = focused()?.terminal;
       const live = new Set(agents().map((a) => a.address));
       const prev = L.state().history.find((x) => x !== here && live.has(x));

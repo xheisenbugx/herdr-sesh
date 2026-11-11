@@ -1,4 +1,4 @@
-// ksesh's agent picker (cmd-a) for Herdr: every thread, in the sidebar's
+// The agent picker (cmd-a) for Herdr: every thread, in the sidebar's
 // sections, with the selected agent's screen (or its diff) beside the list.
 // Type to filter (fzf style), act on an agent without leaving.
 

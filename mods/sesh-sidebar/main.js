@@ -1,4 +1,4 @@
-// The thread sidebar from ksesh, for Herdr: every agent sorted into Pinned,
+// The thread sidebar for Herdr: every agent sorted into Pinned,
 // Inbox, and the Working / Snoozed / Settled shelves (closed threads too,
 // resumable). Click a thread to go to it, right click (or space / m) for its
 // actions, or come in with cmd-shift-b and drive it from the keyboard (? lists keys).
@@ -347,7 +347,7 @@ export default class Sidebar extends View {
       .children(KEYS.map(([k, d]) => h_flex().gap(10).child(div().w(120).flex_none().text_color(t.accent).font_bold().child(k)).child(div().flex_1().text_color(t.muted).child(d))));
   }
 
-  // The keys for the selected thread's state, as ksesh's footer shows them.
+  // The keys for the selected thread's state, as the footer shows them.
   footer(t) {
     const th = this.current();
     const hint = (k, d) => h_flex().gap(4).child(div().font_bold().text_color(t.accent).child(k)).child(div().text_color(t.muted).child(d));

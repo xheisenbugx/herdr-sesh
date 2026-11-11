@@ -1,6 +1,6 @@
 # herdr-sesh
 
-**A [ksesh](https://github.com/xheisenbugx/ksesh)-style layout for the [Herdr](https://herdr.dev) desktop app: a thread sidebar that triages your coding agents, an agent picker with a live screen, and a sesh-style session picker, all on the keyboard.**
+**A keyboard-first layout for the [Herdr](https://herdr.dev) desktop app: a thread sidebar that triages your coding agents, an agent picker with a live screen, and a sesh-style session picker, all on the keyboard.**
 
 ![herdr-sesh: the thread sidebar on the left, an agent waiting for permission on the right](docs/images/hero.png)
 
@@ -28,7 +28,7 @@ The images in this README are mockups with made-up data, drawn in the layout's r
 - [Update and uninstall](#update-and-uninstall)
 - [What it runs and reads](#what-it-runs-and-reads)
 - [How it's built](#how-its-built)
-- [Coming from ksesh](#coming-from-ksesh)
+- [How it handles agents](#how-it-handles-agents)
 - [Troubleshooting](#troubleshooting)
 
 ## Install
@@ -38,14 +38,14 @@ You need [Herdr](https://herdr.dev) **0.1.15 or newer**, opened at least once, a
 Install with one line:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/xheisenbugx/herdr-xheisenbugx/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/xheisenbugx/herdr-sesh/main/install.sh | sh
 ```
 
 Or from a clone:
 
 ```sh
-git clone https://github.com/xheisenbugx/herdr-xheisenbugx
-cd herdr-xheisenbugx
+git clone https://github.com/xheisenbugx/herdr-sesh
+cd herdr-sesh
 sh install.sh
 ```
 
@@ -136,7 +136,7 @@ The picker opens every agent in one big window, with the selected agent's live s
 The session picker works like [sesh](https://github.com/joshmedeski/sesh), with Herdr spaces as the sessions. It lists:
 
 - **spaces:** your Herdr spaces, the ones that need you first;
-- **configs:** the `[[session]]` entries in `~/.config/ksesh/ksesh.toml` (or sesh's `~/.config/sesh/sesh.toml`);
+- **configs:** the `[[session]]` entries in herdr-sesh's own config, `~/.config/herdr-sesh/config.toml` (see [Configuration](#configuration));
 - **session files:** kitty session files in `~/.config/kitty/sessions`;
 - **zoxide:** the directories you use most;
 - **machines:** zoxide directories on your other Herdr machines (`hc machine ls`).
@@ -166,7 +166,7 @@ The actions menu lists everything you can do to a thread, each item with its sid
 
 - **The attention strip** sits at the right end of the tab bar. It names the *other* spaces where an agent is waiting on you or has finished. Click one to go there.
 - **Notifications:** while Herdr isn't the app in front, a waiting or finished agent also posts a macOS notification.
-- **Worktrees:** when you open a new git worktree, the files your repo's `.worktreeinclude` lists are copied into it from the main checkout, as ksesh did.
+- **Worktrees:** when you open a new git worktree, the files your repo's `.worktreeinclude` lists are copied into it from the main checkout.
 
 ## Keys
 
@@ -227,17 +227,21 @@ The actions menu lists everything you can do to a thread, each item with its sid
 
 There's nothing to set up, but these files change how it behaves:
 
-- **`~/.config/ksesh/ksesh.toml`** (or `~/.config/sesh/sesh.toml`): the session picker's `[[session]]` entries and `[default_session].startup_command`. If you already use sesh, your existing file works as is.
+- **`~/.config/herdr-sesh/config.toml`**: herdr-sesh's own settings file. The installer creates it from [`config.example.toml`](config.example.toml) with everything commented out, and never overwrites or deletes it. The session picker reads it each time it opens, so edits apply at once.
 
   ```toml
+  # Runs in every new space the session picker opens from a directory.
   [default_session]
   startup_command = "nvim"
 
+  # Sessions you always want in the picker (its "configs" source, ctrl-g).
   [[session]]
   name = "dotfiles"
   path = "~/dotfiles"
-  startup_command = "nvim"
+  startup_command = "nvim"   # else [default_session]'s
   ```
+
+  When you pick a session, Herdr goes to the space already open in its `path`, or opens a new space there, named `name`, running its `startup_command`.
 
 - **`.worktreeinclude`** at a repo's root: one path or glob per line. These files are copied into each new worktree (`.env`, `config/*.local`, …). Lines starting with `#` and `!` are skipped, and nothing outside the repo is touched.
 - **The look:** the layout brings its own dark purple theme (`themes/herdr-sesh.json`) and uses JetBrains Mono for the panels. Herdr's theme picker still overrides it. Your terminal font comes from your Herdr settings.
@@ -249,7 +253,9 @@ sh install.sh                  # update: run it again (or the curl line)
 sh install.sh --uninstall      # remove the layout, its theme, its mods and its keys
 ```
 
-The installer records what it installed in `~/.config/herdr-app/.herdr-xheisenbugx`. An update replaces only those files.
+Uninstalling keeps your `~/.config/herdr-sesh/config.toml`; delete it yourself if you want it gone.
+
+The installer records what it installed in `~/.config/herdr-app/.herdr-sesh`. An update replaces only those files.
 
 To uninstall without the script, delete these and the `layout:herdr-sesh` and `mod:sesh-*` sections of `keys.json`:
 
@@ -265,10 +271,11 @@ Herdr mods are trusted code, so here is everything this layout does outside its 
   - `hc` (herdr-core), to read an agent's screen, press Enter or Esc for you, send a reply, interrupt it, and label it seen;
   - `git`, for branches, ahead/behind and diffs;
   - `gh`, for pull request numbers (this is the only network access, to GitHub, through your own `gh` login);
-  - `zoxide`, `ls` and `sh`, for the `.worktreeinclude` copy;
+  - `zoxide` and `ls`, for the session picker's directories and previews;
+  - `sh`, for the `.worktreeinclude` copy and a session's `startup_command`;
   - `osascript`, for macOS notifications.
 - **Files it reads:**
-  - `~/.config/ksesh/ksesh.toml` and `~/.config/sesh/sesh.toml`;
+  - `~/.config/herdr-sesh/config.toml`, its settings;
   - `~/.config/kitty/sessions/*.kitty-session`;
   - `~/.claude/sessions/<pid>.json`, to learn each Claude Code conversation's id so a closed thread can be resumed.
 - **Its state:** pins, snoozes and settled threads live in Herdr's own shared state (`shared.json`). Nothing is sent anywhere.
@@ -289,6 +296,7 @@ mods/
   sesh-term-menu/           the terminal right-click menu, with "Thread actions…"
   sesh-toast/               notifications, and the macOS notification when Herdr is in the back
 install.sh                  install, update, uninstall
+config.example.toml         the commented settings file the installer starts you with
 scripts/gen-images.py       draws the README images
 RECIPE.md                   the brief another agent can build this from
 ```
@@ -297,11 +305,9 @@ Herdr mods can't import from each other's folders, so `lib.js` is copied into ev
 
 To work on it, edit the copies in `~/.config/herdr-app/mods/`. Herdr reloads them live as you save. Copy them back here when you're done.
 
-## Coming from ksesh
+## How it handles agents
 
-This is a port of ksesh's UI from kitty to Herdr. The keys and behavior stay as close as Herdr allows:
-
-- **Sessions → spaces.** ksesh's kitty sessions are Herdr spaces. The windows inside them are Herdr tabs and panes.
+- **Sessions are spaces.** A session in the picker is a Herdr space; the windows inside it are Herdr tabs and panes.
 - **No hooks to install.** herdr-core detects each agent's status by itself.
 - **"What it needs"** ("Allow Bash: npm test") is read from the agent's screen. If a prompt looks unusual, the sidebar just says "needs you".
 - **Approve and deny** press Enter and Esc in the agent's terminal. **Reply** presses Esc first if the agent is waiting, then types your text.
@@ -318,4 +324,4 @@ This is a port of ksesh's UI from kitty to Herdr. The keys and behavior stay as 
 
 ## License
 
-MIT. Based on [ksesh](https://github.com/xheisenbugx/ksesh), itself a port of Josh Medeski's [sesh](https://github.com/joshmedeski/sesh).
+MIT. The session picker follows Josh Medeski's [sesh](https://github.com/joshmedeski/sesh).

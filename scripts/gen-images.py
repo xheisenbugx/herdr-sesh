@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draws the README images for herdr-xheisenbugx: mockups of the herdr-sesh
+"""Draws the README images for herdr-sesh: mockups of the herdr-sesh
 layout with demo data (no real spaces or terminal content), in its theme."""
 import os, re, subprocess, sys
 from xml.sax.saxutils import escape

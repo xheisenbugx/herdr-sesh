@@ -1,0 +1,20 @@
+# herdr-sesh's configuration: ~/.config/herdr-sesh/config.toml
+# The session picker (cmd-p) reads it each time it opens. Everything is optional.
+
+# Runs in every new space the session picker opens from a directory
+# (a zoxide folder, or a session below without its own startup_command).
+[default_session]
+# startup_command = "nvim"
+
+# Sessions you always want in the picker (its "configs" source, ctrl-g).
+# Enter goes to the space already open in `path`, or opens a new space there
+# named `name`, running `startup_command` (else [default_session]'s).
+
+# [[session]]
+# name = "dotfiles"
+# path = "~/dotfiles"
+# startup_command = "nvim"
+
+# [[session]]
+# name = "notes"
+# path = "~/notes"

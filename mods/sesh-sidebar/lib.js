@@ -1,4 +1,4 @@
-// Shared thread model for the herdr-sesh layout (a port of ksesh's sidebar).
+// Shared thread model for the herdr-sesh layout (the thread sidebar, pickers and menu).
 // The source of truth is mods/sesh-sidebar/lib.js; sesh-agents, sesh-sessions,
 // sesh-bar and sesh-menu carry copies (mods can't import across folders).
 // Keep them equal: mods/sesh-sidebar/sync-lib.sh copies it.
@@ -51,7 +51,7 @@ export function undo() {
   return true;
 }
 
-// Stamps status changes and applies ksesh's rules: an agent that starts
+// Stamps status changes and applies the thread rules: an agent that starts
 // waiting wakes from a snooze; one that starts working again (you sent it a
 // prompt) leaves Settled. A live agent that's gone for a while becomes a
 // closed thread you can resume. Call it from one place (sesh-bar) so writes don't race.
@@ -107,7 +107,7 @@ export function track(now = Date.now()) {
   }
   history = history.filter((x) => live.has(x));
   if (history.length !== s.history.length) dirty = true;
-  // Closed threads go after two weeks, as ksesh's history does.
+  // Closed threads go after two weeks.
   for (const [id, c] of Object.entries(closed)) if (now - (c.at ?? 0) > 2 * WEEK) { delete closed[id]; dirty = true; }
   const pins = s.pins.filter((p) => live.has(p) || changed[p]);
   if (pins.length !== s.pins.length) dirty = true;
@@ -171,7 +171,7 @@ export function age(ms) {
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
-// Every thread, in ksesh's sections. `filter` matches title, space or branch
+// Every thread, in the sidebar's sections. `filter` matches title, space or branch
 // fzf-style (letters in order); `space` keeps one space's threads.
 export function threads({ filter = "", space = null, now = Date.now() } = {}) {
   const s = state();
@@ -262,7 +262,7 @@ export function forget(t) {
   patch((s) => { delete s.closed[t.id]; return s; }, { undo: true });
 }
 // A finished agent you've read without going to it: Herdr counts it seen once its
-// herdr.seen label reaches its turn (ksesh's ctrl-s in the agent picker).
+// herdr.seen label reaches its turn (ctrl-s in the agent picker).
 export async function markSeen(t) {
   if (!t || t.closed || t.status !== "done") return;
   const turn = terminals().find((x) => x.address === t.address)?.turn;
@@ -328,7 +328,7 @@ export function closeThread(t) {
 }
 export function review(t) {
   if (!t?.cwd) return;
-  // Everything since the branch left its base, committed or not, as `ksesh agent diff` shows it.
+  // Everything since the branch left its base, committed or not, as its pull request will show it.
   const script = 'b=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo main); ' +
     'm=$(git merge-base HEAD "$b" 2>/dev/null || echo HEAD); git --no-pager log --oneline "$m"..HEAD; echo; ' +
     'git --no-pager diff --stat "$m"; echo; git diff "$m"; exec "${SHELL:-/bin/zsh}" -l';
@@ -355,7 +355,7 @@ export function rename(t) {
   run("tab.rename", { id: t.a.tab });
 }
 
-// ksesh's thread menu, item by item: [icon, label, key, action, danger].
+// The thread menu, item by item: [icon, label, key, action, danger].
 // An action is a function name in this file or a view action ("reply", "snooze", "more").
 export function threadMenu(t, { pr = null, pinnedCount = 0 } = {}) {
   if (!t) return viewMenu();
@@ -439,7 +439,7 @@ export function snoozeOptions(now = new Date()) {
     { label: "Next week", until: nextMon },
   ];
 }
-// ksesh's free-form snooze times: 90m, 3h, 2d, 15:04, evening, tomorrow, next-week.
+// Free-form snooze times: 90m, 3h, 2d, 15:04, evening, tomorrow, next-week.
 export function parseWhen(text, now = new Date()) {
   const s = (text ?? "").trim().toLowerCase();
   if (!s) return null;
@@ -535,7 +535,7 @@ export function sectionHead(t, icon, label, count) {
     .child(div().flex_none().font_normal().child(String(count)));
 }
 
-// One thread, two lines, as ksesh draws it:
+// One thread, two lines:
 //   •🔔 Fix the login redirect              2m ●
 //       api · Allow Bash: npm test   fix/login ↑2  #42
 // `hovered` shows the pin, snooze and settle buttons; `onAct(name, cx)` runs one,
@@ -614,7 +614,7 @@ export function fmtTime(ms) {
 
 // Keeps hints (what a waiting agent asks) and git facts (ahead/behind, PR)
 // fresh for the threads a view shows. Owned by a view instance. A thread
-// whose PR merged is settled once, as ksesh does (restoring it sticks).
+// whose PR merged is settled once (restoring it sticks).
 export class Facts {
   constructor() { this.need = {}; this.git = {}; this.prAt = {}; }
   start(cx, list) {

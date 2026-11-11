@@ -1,7 +1,7 @@
-// ksesh's session picker (cmd-p) for Herdr: running spaces, sessions from
-// ksesh.toml / sesh.toml, and zoxide directories, with a live preview.
-// Enter goes to a space, or opens a directory as a new space (running the
-// config's startup_command, like sesh).
+// The session picker (cmd-p) for Herdr: running spaces, the sessions in
+// herdr-sesh's own config (~/.config/herdr-sesh/config.toml), and zoxide
+// directories, with a live preview. Enter goes to a space, or opens a directory
+// as a new space (running the config's startup_command, like sesh).
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
@@ -18,7 +18,8 @@ const SOURCES = [
 ];
 const RANK = { blocked: 0, done: 1, working: 2, idle: 3 };
 
-// Just enough TOML for sesh's [[session]] tables and [default_session].
+// herdr-sesh's config file, and just enough TOML for its [[session]] tables and [default_session].
+const CONFIG = ".config/herdr-sesh/config.toml";
 function parseSesh(text) {
   const out = { sessions: [], startup: null };
   let cur = null;
@@ -54,9 +55,9 @@ export default class Sessions extends View {
     cx.timer.after(300, () => this.input.focus());
     cx.spawn(async (cx) => {
       const h = home();
-      const text = (await readTextFile(`${h}/.config/ksesh/ksesh.toml`)) ?? (await readTextFile(`${h}/.config/sesh/sesh.toml`));
+      const text = await readTextFile(`${h}/${CONFIG}`).catch(() => null);
       this.config = parseSesh(text);
-      // kitty's session files (~/.config/kitty/sessions), as ksesh listed them: a space at the file's
+      // kitty's session files (~/.config/kitty/sessions): a space at the file's
       // `cd` folder, running its first `launch` command.
       try {
         const dir = `${h}/.config/kitty/sessions`;
@@ -167,7 +168,7 @@ export default class Sessions extends View {
     run("space.new", { folder: r.path, ...(name ? { name } : {}), ...(cmd ? { argv: ["sh", "-c", cmd] } : {}) });
   }
 
-  // Directories on the other machines (ksesh's ctrl-r): each one's zoxide list.
+  // Directories on the other machines (ctrl-r): each one's zoxide list.
   loadRemote(cx) {
     if (this.remote) return;
     this.remote = [];

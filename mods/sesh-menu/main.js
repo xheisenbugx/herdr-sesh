@@ -1,4 +1,4 @@
-// ksesh's actions menu for the herdr-sesh layout: everything you can do to a
+// The actions menu for the herdr-sesh layout: everything you can do to a
 // thread, by the sidebar's letters (a approves, p pins, d reviews…), opened by
 // a right click on a thread, `space` / `m` in the sidebar, or alt+space / alt+m
 // in the agent picker. Without a thread it's the sidebar's own options.

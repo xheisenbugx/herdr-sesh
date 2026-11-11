@@ -1,5 +1,5 @@
 // Context menus for the herdr-sesh layout: Herdr's items, plus "Thread
-// actions…" on an agent's terminal (ksesh's actions menu, sesh-menu). Opened as a popup with
+// actions…" on an agent's terminal (the actions menu, sesh-menu). Opened as a popup with
 // props { tab: "pane" | "tab" | "space" | "global", target }.
 // ↑/↓ move, Enter runs, Esc closes. An item is [label, command, args];
 // a command "worktree" opens the worktree dialog instead.

@@ -1,6 +1,5 @@
-// The herdr-sesh layout's notifications: Herdr's toast, plus, as ksesh's
-// desktop notifications did, a macOS notification when Herdr isn't the app in
-// front (an agent waiting, finished or failed while you're elsewhere).
+// The herdr-sesh layout's notifications: Herdr's toast, plus a macOS
+// notification when Herdr isn't the app in front (an agent waiting, finished or failed while you're elsewhere).
 // Clicking the toast runs its action (e.g. go to the agent) and dismisses it.
 
 import { View, div, image } from "gpui-kit";
