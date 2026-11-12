@@ -335,14 +335,14 @@ def sessions():
     hatch(s, x, yy, w, "Sessions", None)
     yy += 22
     fx = x
-    for i, (ic, label) in enumerate(((None, "all"), ("grid", "spaces"), ("gear", "configs"), ("box", "session files"), ("folder", "zoxide"), ("branch", "machines"))):
+    for i, (ic, label) in enumerate(((None, "all"), ("grid", "spaces"), ("gear", "configs"), ("folder", "zoxide"), ("branch", "machines"))):
         if i:
             fx = s.text(fx + 6, yy, "·", C["dim"]) + 6
         col = C["accent"] if i == 0 else C["muted"]
         if ic:
             s.icon(ic, fx, yy - 10, 11, col); fx += 16
         fx = s.text(fx, yy, label, col, bold=i == 0)
-    s.text(x + w, yy, "11", C["muted"], anchor="end")
+    s.text(x + w, yy, "10", C["muted"], anchor="end")
     yy += 22
     s.text(x + 12, yy, "›", C["accent"], bold=True)
     s.rect(x + 28, yy - 13, 8, 17, C["fg"])
@@ -351,7 +351,7 @@ def sessions():
     top = yy + 34
     s.line(x + lw, top - 16, x + lw, OY + OH - 70)
     rows = [("bell", C["blocked"], "api", True), ("check", C["done"], "docs", False), ("grid", C["working"], "web", False),
-            ("grid", C["working"], "dotfiles", False), ("gear", C["muted"], "notes", False), ("box", C["muted"], "monitoring", False),
+            ("grid", C["working"], "dotfiles", False), ("gear", C["muted"], "notes", False),
             ("folder", C["teal"], "~/code/mobile", False), ("folder", C["teal"], "~/code/infra/terraform", False),
             ("folder", C["teal"], "~/code/design-system", False), ("folder", C["teal"], "~/Downloads", False), ("branch", C["muted"], "vps:~/apps/blog", False)]
     ry = top
@@ -380,7 +380,7 @@ def sessions():
         cy += 22
     s.text(px + 30, cy + 16, "NORMAL  src/routes.ts", C["muted"])
     s.text(px + 30 + 46 * CW, cy + 16, "12:3", C["muted"])
-    footer(s, x, OY + OH - 24, w, (("↵", "connect"), ("^o", "hide preview"), ("^a ^t ^g ^s ^z ^r", "source"), ("^x", "kill"), ("esc", "quit")))
+    footer(s, x, OY + OH - 24, w, (("↵", "connect"), ("^o", "hide preview"), ("^a ^t ^g ^z ^r", "source"), ("^x", "kill"), ("esc", "quit")))
     s.save("sessions")
 
 
