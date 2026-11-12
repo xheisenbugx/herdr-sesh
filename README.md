@@ -98,9 +98,13 @@ Threads move between sections on their own:
 | **Inbox** | everything else, newest activity first |
 | **Working** | agents busy on something that doesn't need you |
 | **Snoozed** | hidden until a time you pick (1 hour, 3 hours, this evening, tomorrow, next week, or any time), or until the agent needs you |
-| **Settled** | done with: settled by hand, after a week idle, or once its pull request is merged |
+| **Settled** | done with: settled by hand, after a week idle (or `settle_after`, see [Configuration](#configuration)), or once its pull request is merged |
 
 A snoozed agent that starts waiting on you wakes up by itself. A settled one that you send a new prompt comes back to the inbox.
+
+**Pull requests show on the row.** A thread on a branch with a pull request shows `#42`: green while open, dim while a draft, accent once merged. An open one also shows its checks: `✓` passed, `•` running, `✗` failing. When a worktree thread's pull request merges, the thread settles and a notification offers to clean up: click it (or choose **Clean up merged branch…** in the actions menu, `C`) and, once you confirm, its space closes, its worktree is removed and its branch is deleted. A worktree with uncommitted changes is left alone.
+
+A waiting thread shows how long it's been waiting, in yellow (`needs you · 12m`).
 
 **Threads outlive their panes.** If you close a Claude Code agent's pane, its thread stays in Settled as a *closed* thread. Press `enter` on it to resume the conversation (`claude --resume`) in its old space and folder.
 
@@ -112,7 +116,8 @@ Click a thread to go to it. Hover over one for its pin, snooze and settle button
 
 The picker opens every agent in one big window, with the selected agent's live screen beside the list.
 
-- Type to filter, fzf style (`lgn` finds `login`).
+- Type to filter, fzf style (`lgn` finds `login`). From 3 letters on it also looks at what's on each agent's screen, and shows the line it found under the thread.
+- Mark several threads with `ctrl-t` or shift-click, then approve, deny, pin, settle, snooze, wake, mark seen or close them all at once. One `u` in the sidebar undoes the whole batch; `esc` clears the marks.
 - Press `ctrl-g` to see the agent's diff instead of its screen.
 - Snoozed and settled threads start folded away, and open as soon as you type, so any thread is always one search away.
 
@@ -129,6 +134,7 @@ The picker opens every agent in one big window, with the selected agent's live s
 | `alt-p` `alt-s` `alt-z` `alt-e` | pin, settle, snooze for an hour, wake |
 | `alt-b` | open its pull request |
 | `alt-w` | close its pane (press it twice) |
+| `ctrl-t` / shift-click | mark it; the keys above then act on every marked thread |
 | `alt-space` / `alt-m` | its actions menu |
 | `f1` | every key |
 
@@ -168,8 +174,8 @@ In the agent picker the menu opens over the picker, at the row. The picker stays
 
 ### The attention strip and notifications
 
-- **The attention strip** sits at the right end of the tab bar. It names the *other* spaces where an agent is waiting on you or has finished. Click one to go there.
-- **Notifications:** while Herdr isn't the app in front, a waiting or finished agent also posts a macOS notification.
+- **The attention strip** sits at the right end of the tab bar. It names the *other* spaces where an agent is waiting on you or has finished, with how long it has been (`api 12m`), the longest wait first. Click one to go there.
+- **Notifications:** while Herdr isn't the app in front, a waiting or finished agent also posts a macOS notification, except during your `quiet_hours`.
 - **Worktrees:** when you open a new git worktree, the files your repo's `.worktreeinclude` lists are copied into it from the main checkout.
 
 ## Keys
@@ -183,10 +189,10 @@ In the agent picker the menu opens over the picker, at the row. The picker stays
 | `cmd-a` | agent picker |
 | `cmd-j` | the agent that needs you next (the one waiting longest first) |
 | `cmd-shift-j` | back to the agent you were with before |
-| `cmd-b` | show or hide the sidebar |
+| `cmd-b` | show or hide the sidebar (hiding it gives the keyboard back to your terminal) |
 | `cmd-shift-b` | into the sidebar and back out |
 | `cmd-ctrl-p` `s` `z` `w` | pin, settle, snooze for an hour, or wake the thread you're in |
-| `cmd-ctrl-j` / `cmd-ctrl-k` / `cmd-ctrl-1`–`9` | next, previous, nth thread of the sidebar |
+| `cmd-ctrl-j` / `cmd-ctrl-k` / `cmd-ctrl-1`–`9` | next, previous, nth thread of the sidebar, as it's shown (with **This session only** on, they count only this space's threads, as `1`–`9` do) |
 | `cmd-t` | new tab |
 | `cmd-enter` / `cmd-d` / `cmd-\|` | split right |
 | `cmd-shift-d` | split down |
@@ -220,6 +226,7 @@ In the agent picker the menu opens over the picker, at the row. The picker stays
 | `R` | rename the thread |
 | `X` | close its pane (press it twice), or forget a closed thread |
 | `A` | archive: remove its worktree |
+| `C` (in the actions menu) | clean up a merged branch: its worktree and the branch |
 | `space` / `m` / right click | the actions menu |
 | `/` | filter |
 | `o` / `f` | group the inbox by space / only this space |
@@ -243,7 +250,16 @@ There's nothing to set up, but these files change how it behaves:
   name = "dotfiles"
   path = "~/dotfiles"
   startup_command = "nvim"   # else [default_session]'s
+
+  [threads]
+  settle_after = "4h"          # an idle thread moves to Settled after this (default 7d)
+  forget_closed_after = "3d"   # a closed thread is forgotten after this (default 14d)
+
+  [notifications]
+  quiet_hours = "22:00-08:00"  # no macOS notifications then (Herdr's own toast still shows)
   ```
+
+  Durations are a number and `m`, `h`, `d` or `w`. `[threads]` and `[notifications]` are read every 10 seconds.
 
   When you pick a session, Herdr goes to the space already open in its `path`, or opens a new space there, named `name`, running its `startup_command`.
 
@@ -302,13 +318,19 @@ mods/
   sesh-toast/               notifications, and the macOS notification when Herdr is in the back
 install.sh                  install, update, uninstall
 config.example.toml         the commented settings file the installer starts you with
+scripts/pull-live.sh        copies your live edits in ~/.config/herdr-app back into the repo
+scripts/check.sh            the checks CI and the pre-commit hook run
 scripts/gen-images.py       draws the README images
 RECIPE.md                   the brief another agent can build this from
 ```
 
-Herdr mods can't import from each other's folders, so `lib.js` is copied into every mod that needs it. Edit `mods/sesh-sidebar/lib.js`, then run `mods/sesh-sidebar/sync-lib.sh`, then `herdr-app check mods/<name>`.
+Herdr mods can't import from each other's folders, so `lib.js` is copied into every mod that needs it. Edit `mods/sesh-sidebar/lib.js`, then run `mods/sesh-sidebar/sync-lib.sh`, then `herdr-app check mods/<name>`. `sync-lib.sh --check` only says whether the copies match.
 
-To work on it, edit the copies in `~/.config/herdr-app/mods/`. Herdr reloads them live as you save. Copy them back here when you're done.
+To work on it:
+
+1. Edit the installed copies in `~/.config/herdr-app/mods/`. Herdr reloads them as you save.
+2. Run `sh scripts/pull-live.sh` to copy your changes back into the repo (`--dry-run` lists them first). It also copies the layout, the theme and this layout's sections of `keys.json`.
+3. Commit. `sh scripts/check.sh` checks that the `lib.js` copies match and that every mod, JSON file and script parses. CI runs it on every pull request; to run it before each commit too, turn on the hook once per clone with `git config core.hooksPath .githooks`.
 
 ## How it handles agents
 

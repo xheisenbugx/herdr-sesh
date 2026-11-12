@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stops a commit whose lib.js copies differ, or whose mods or JSON don't parse.
+# Turn it on once per clone: git config core.hooksPath .githooks
+exec sh scripts/check.sh

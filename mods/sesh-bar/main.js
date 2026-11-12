@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { focused, run, theme, nextCommand, spaces, agents, panes, layout, home, readTextFile, appHome, exec, notify } from "herdr";
+import { focused, run, theme, nextCommand, spaces, agents, panes, layout, home, readTextFile, appHome, exec, notify, shared, setShared } from "herdr";
 import * as L from "./lib.js";
 
 function find(node, id) {
@@ -19,6 +19,8 @@ export default class Bar extends View {
     this.needAt = -1;
     this.tick(cx);
     cx.timer.every(1000, (cx) => this.tick(cx));
+    // The strip's waiting times ("12m") move on: redraw now and then, not every second.
+    cx.timer.every(30000, (cx) => cx.notify());
     // Which conversation each Claude agent runs, so a closed one can be resumed; and
     // .worktreeinclude for new worktrees. One round at a time: a slow one (a big copy, a
     // far machine) mustn't have the next ones pile up behind it.
@@ -27,6 +29,7 @@ export default class Bar extends View {
       if (this.busy) return;
       this.busy = true;
       try {
+        await this.readConfig();
         await L.captureSessions(home(), readTextFile).catch(() => {});
         if (worktrees) await this.worktrees();
       } finally { this.busy = false; }
@@ -57,6 +60,31 @@ export default class Bar extends View {
   }
 
   thread() { return L.currentThread(); }
+
+  // herdr-sesh's config, for every view (shared "sesh.config"): read every 10 s.
+  async readConfig() {
+    const text = await readTextFile(`${home()}/${L.CONFIG_PATH}`).catch(() => "");
+    const cfg = L.parseConfig(text);
+    if (JSON.stringify(cfg) !== JSON.stringify(shared("sesh.config") ?? {})) setShared("sesh.config", cfg);
+  }
+
+  // Removes a merged thread's worktree and deletes its branch: its space closes first (its
+  // agent stops), then git runs from the repo's own checkout, on the thread's machine.
+  async cleanup(address) {
+    const th = L.threads().all.find((t) => t.address === address && !t.closed);
+    if (!th?.cwd) return;
+    const { cwd, machine, space, title } = th;
+    // Unsaved work stops it before anything closes.
+    const st = await exec("git", ["status", "--porcelain"], { cwd, on: machine, timeout: 8000 }).catch(() => null);
+    if (st?.code !== 0 || st.stdout.trim()) {
+      notify({ title: `Kept "${title}"`, body: st?.code === 0 ? "Its worktree has uncommitted changes." : "Couldn't read its worktree.", level: "warning" });
+      return;
+    }
+    if (space && spaces().some((p) => p.id === space)) run("space.close", { id: space, confirmed: true });
+    const r = await exec("sh", ["-c", `sleep 1; ${L.CLEANUP}`, "sh", cwd], { on: machine, timeout: 120000 }).catch((e) => ({ code: 1, stderr: String(e) }));
+    if (r.code === 0) notify({ title: `Cleaned up ${r.stdout.trim() || "the branch"}`, body: "Worktree removed, branch deleted.", level: "success" });
+    else notify({ title: `Couldn't clean up "${title}"`, body: (r.stderr || r.stdout || "git failed").trim().split("\n").pop(), level: "error" });
+  }
 
   // Copies what .worktreeinclude lists into a new worktree: Herdr's worktree dialog
   // doesn't, so a terminal showing up in a fresh worktree gets it done here.
@@ -126,14 +154,24 @@ export default class Bar extends View {
     else if (name === "snooze" && th) L.snooze(th, Date.now() + 3600e3);
     else if (name === "wake" && th) L.wake(th);
     else if (name === "thread-next" || name === "thread-prev") {
-      const order = L.listOrder(L.threads());
+      const order = L.shownOrder();
       if (!order.length) return;
       const cur = order.findIndex((t) => t.address === th?.address);
       const i = cur < 0 ? (name === "thread-next" ? 0 : order.length - 1) : (cur + (name === "thread-next" ? 1 : -1) + order.length) % order.length;
       L.go(order[i]);
     } else if (name === "thread") {
-      const t = L.listOrder(L.threads())[Number(arg) - 1];
+      const t = L.shownOrder()[Number(arg) - 1];
       if (t) L.go(t);
+    } else if (name === "toggle-sidebar") {
+      // Hiding it hands the keyboard back first (a hidden sidebar would keep it).
+      if (find(layout(), "sidebar")?.hidden) run("layout.show", { id: "sidebar" });
+      else run("sesh-sidebar.hide");
+    } else if (name === "cleanup" && arg) {
+      cx?.spawn(async () => this.cleanup(arg));
+    } else if (name === "ask-cleanup" && arg) {
+      // From the "PR merged" notification: the actions menu asks before anything goes.
+      const t = L.threads().all.find((x) => x.address === arg && !x.closed);
+      if (t) L.openMenu(t, { from: "notification", view: "cleanup", at: "pointer" });
     } else if (name === "view" && arg) {
       // A sidebar command from the actions menu, sent once the just-shown sidebar is listening.
       cx?.timer.after(150, () => run(`sesh-sidebar.${arg}`));
@@ -148,7 +186,13 @@ export default class Bar extends View {
   attention() {
     const here = focused()?.space;
     const others = spaces().filter((p) => p.id !== here && (p.status === "blocked" || p.status === "done"));
-    return others.sort((a, b) => (b.status === "blocked") - (a.status === "blocked"));
+    return others.sort((a, b) => (b.status === "blocked") - (a.status === "blocked") || this.since(a) - this.since(b));
+  }
+  // Since when a space's agent in its status has been so (the longest waiting one).
+  since(p) {
+    const ch = L.state().changed;
+    const ats = agents().filter((a) => a.space === p.id && a.status === p.status).map((a) => ch[a.address]?.at).filter(Boolean);
+    return ats.length ? Math.min(...ats) : Date.now();
   }
 
   // The strip's block is as wide as what it shows, so the tab bar's own buttons
@@ -156,9 +200,10 @@ export default class Bar extends View {
   widthFor(others) {
     const shown = others.slice(0, 4);
     return shown.length
-      ? Math.min(420, Math.ceil(20 + shown.reduce((w, p) => w + 15 + Math.min(110, [...p.name].length * 7.3), 0) + 10 * (shown.length - 1) + (others.length > 4 ? 34 : 0)))
+      ? Math.min(520, Math.ceil(20 + shown.reduce((w, p) => w + 15 + Math.min(110, [...p.name].length * 7.3) + 4 + this.ageText(p).length * 7.3, 0) + 10 * (shown.length - 1) + (others.length > 4 ? 34 : 0)))
       : 12;
   }
+  ageText(p) { return L.age(Date.now() - this.since(p)); }
   // Asked for in the last 5 s: the resize is on its way (don't ask again every redraw).
   asked(px) { return this.askedPx === px && Date.now() - (this.askedAt ?? 0) < 5000; }
   fits(others) {
@@ -208,7 +253,8 @@ export default class Bar extends View {
           })
           .hover((s) => s.text_color(t.foreground))
           .child(svg(L.ICON(p.status === "blocked" ? "bell" : "check")).size(11).text_color(c))
-          .child(div().max_w(110).truncate().child(p.name));
+          .child(div().max_w(110).truncate().child(p.name))
+          .child(div().text_color(t.dim).child(this.ageText(p)));
       }))
       .when(others.length > 4, (el) => el.child(div().text_color(t.dim).child(`+${others.length - 4}`)));
   }

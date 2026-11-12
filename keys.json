@@ -7,7 +7,7 @@
     "cmd-a": "mod.open:sesh-agents",
     "cmd-j": "sesh-bar.need-next",
     "cmd-shift-j": "sesh-bar.agent-last",
-    "cmd-b": "layout.toggle:sidebar",
+    "cmd-b": "sesh-bar.toggle-sidebar",
     "cmd-shift-b": "sesh-bar.sidebar",
     "cmd-ctrl-p": "sesh-bar.pin",
     "cmd-ctrl-s": "sesh-bar.settle",

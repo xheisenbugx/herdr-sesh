@@ -97,7 +97,14 @@ export default class Sidebar extends View {
     else if (c === "only") this.setView({ only: !this.only });
     else if (c === "narrow" || c === "wide") this.resize(c === "wide" ? 24 : -24);
     else if (c === "help") { this.enter(); this.mode = "help"; }
-    else if (c === "hide") { this.leave(); run("layout.hide", { id: "sidebar" }); }
+    // Hand the keyboard back only if it's here (cmd-b while you're in a terminal keeps it there).
+    // (Typing in the filter or reply box counts as here too.)
+    else if (c === "hide") {
+      if (this.handle.is_focused() || this.mode === "filter" || this.mode === "reply") this.leave();
+      if (this.mode === "reply") this.replyInput.set_value("");
+      this.mode = null;
+      run("layout.hide", { id: "sidebar" });
+    }
   }
   setView(v) {
     if ("group" in v) this.group = v.group;
