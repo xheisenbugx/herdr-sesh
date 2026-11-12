@@ -1,10 +1,21 @@
 // The herdr-sesh layout's notifications: Herdr's toast, plus a macOS
-// notification when Herdr isn't the app in front (an agent waiting, finished or failed while you're elsewhere).
+// notification when Herdr isn't the app in front (an agent waiting, finished or failed while you're elsewhere),
+// except in the config's [notifications] quiet_hours.
 // Clicking the toast runs its action (e.g. go to the agent) and dismisses it.
 
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { props, closeOverlay, run, theme, window, exec } from "herdr";
+import { props, closeOverlay, run, theme, window, exec, shared } from "herdr";
+
+// Inside ~/.config/herdr-sesh/config.toml's [notifications] quiet_hours ("22:00-08:00"),
+// as sesh-bar last read it.
+function quiet(now = new Date()) {
+  const m = String(shared("sesh.config")?.notifications?.quiet_hours ?? "").match(/^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$/);
+  if (!m) return false;
+  const from = Number(m[1]) * 60 + Number(m[2]), to = Number(m[3]) * 60 + Number(m[4]);
+  const t = now.getHours() * 60 + now.getMinutes();
+  return from <= to ? t >= from && t < to : t >= from || t < to;
+}
 
 const DOT = { error: "blocked", warning: "working", success: "done", info: "accent" };
 
@@ -15,7 +26,7 @@ export default class Toast extends View {
   init() {
     const p = props() ?? {};
     const w = window();
-    if (!w || w.platform !== "macos" || w.active || !p.title) return;
+    if (!w || w.platform !== "macos" || w.active || !p.title || quiet()) return;
     const script = `display notification ${q(p.body ?? "")} with title ${q("Herdr")} subtitle ${q(p.title)}`;
     exec("osascript", ["-e", script], { timeout: 5000 }).catch(() => {});
   }

@@ -4,7 +4,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { run, theme, props, closeOverlay, hc, exec, focused, settings, spaces, nextCommand } from "herdr";
+import { run, theme, props, closeOverlay, hc, exec, focused, settings, spaces, nextCommand, notify } from "herdr";
 import * as L from "./lib.js";
 
 const KEYS = [
@@ -17,10 +17,12 @@ const KEYS = [
   ["alt-d", "the full review, in a pane"],
   ["ctrl-d / ctrl-u", "scroll the preview"],
   ["alt-p alt-s alt-z alt-e", "pin, settle, snooze 1h, wake"],
+  ["ctrl-t / shift-click", "mark threads: ^y ^x ^s and the alt keys act on every marked one"],
   ["alt-b", "open its pull request"],
   ["alt-w", "close its pane (press twice; forgets a closed thread)"],
   ["alt-space / alt-m", "its actions, by the sidebar's letters"],
   ["↑ ↓ / ctrl-n ctrl-p", "move"],
+  ["type 3+ letters", "also finds what's on an agent's screen (the line shows under it)"],
   ["f1", "every key"],
   ["esc", "quit"],
 ];
@@ -39,6 +41,11 @@ export default class Agents extends View {
     this.help = false;
     this.replying = null; // the address you're replying to (set by ctrl-o), else null
     this.busy = false;
+    this.gen = 0; // bumped when the preview switches between screen and diff: older reads are dropped
+    this.marked = new Set(); // addresses picked for a bulk action
+    this.armed = 0; // when alt-w was pressed with marks (a second press within 3 s closes them)
+    this.texts = {}; // address → its screen's lines, for finding text in it
+    this.textsBusy = false;
     this.wheel = 0;
     this.scrolledTo = null;
     this.shelfScroll = ScrollHandle.new();
@@ -54,6 +61,7 @@ export default class Agents extends View {
       if (this.replying) return;
       this.filter = this.input.value();
       this.sel = null;
+      this.readTexts(cx);
       cx.notify();
     });
     this.input.on("submit", (_e, cx) => {
@@ -75,6 +83,7 @@ export default class Agents extends View {
     this.facts.start(cx, () => this.model().all);
     cx.timer.every(1000, (cx) => this.refresh(cx));
     this.refresh(cx);
+    cx.timer.every(4000, (cx) => this.readTexts(cx));
     // The actions menu opens over the picker; when it goes, it sends "focus" so typing
     // goes back to the filter box.
     cx.spawn(async (cx) => {
@@ -106,7 +115,55 @@ export default class Agents extends View {
   }
   machineOf(th) { return spaces().find((p) => p.id === th.space)?.machine ?? null; }
 
-  model() { return L.threads({ filter: this.filter }); }
+  model() { return L.threads({ filter: this.filter, content: (t) => this.texts[t.address]?.join("\n") }); }
+
+  // Every agent's screen, while the filter is long enough to look for in them.
+  readTexts(cx) {
+    if (this.filter.trim().length < 3 || this.textsBusy) return;
+    this.textsBusy = true;
+    cx.spawn(async (cx) => {
+      try {
+        for (const t of L.threads().all) {
+          if (t.closed) continue;
+          const r = await hc(["read", t.address, "--lines", "200"]).catch(() => null);
+          if (r?.code === 0) this.texts[t.address] = L.screenLines(r.stdout);
+        }
+      } finally { this.textsBusy = false; cx.notify(); }
+    });
+  }
+  // The line that matched the filter, when the title, space and branch didn't.
+  snippet(th) {
+    const q = this.filter.trim().toLowerCase();
+    if (q.length < 3 || L.fuzzy(this.filter)(`${th.title} ${th.spaceName} ${th.branch ?? ""}`)) return null;
+    const line = (this.texts[th.address] ?? []).findLast((l) => l.toLowerCase().includes(q));
+    if (!line) return null;
+    const at = line.toLowerCase().indexOf(q);
+    const from = Math.max(0, at - 24);
+    return (from ? "…" : "") + line.slice(from).trim();
+  }
+  // What the bulk keys act on: the marked threads still here, else the selected one.
+  targets(th) {
+    // (Unfiltered: a marked thread the filter now hides is still marked.)
+    const all = L.threads().all.filter((x) => this.marked.has(x.address));
+    return all.length ? all : th ? [th] : [];
+  }
+  toggleMark(th) {
+    if (!th) return;
+    if (this.marked.has(th.address)) this.marked.delete(th.address);
+    else this.marked.add(th.address);
+  }
+  // One action on every target, as one undo step. Pin and settle go one way for all of
+  // them: pin (settle) unless every one already is, then unpin (restore).
+  bulk(name, th) {
+    const ts = this.targets(th);
+    const live = ts.filter((x) => !x.closed);
+    if (name === "pin") { const on = live.some((x) => !x.pinned); L.together(() => live.filter((x) => x.pinned !== on).forEach((x) => L.togglePin(x))); }
+    else if (name === "settle") { const on = live.some((x) => !x.settled); L.together(() => live.filter((x) => !!x.settled !== on).forEach((x) => L.toggleSettle(x))); }
+    else if (name === "snooze") L.together(() => live.forEach((x) => L.snooze(x, Date.now() + 3600e3)));
+    else if (name === "wake") L.together(() => live.forEach((x) => L.wake(x)));
+    else return ts;
+    return ts;
+  }
   items(m) {
     const out = [...m.pinned, ...m.inbox];
     for (const s of SHELVES) {
@@ -123,6 +180,7 @@ export default class Agents extends View {
     // One look at a time: a big diff can take longer than the 1 s timer.
     if (!th || th.closed || this.busy) return;
     this.busy = true;
+    const gen = this.gen;
     cx.spawn(async (cx) => {
       try {
         if (this.diff) {
@@ -141,7 +199,8 @@ export default class Agents extends View {
           if (r.code === 0) this.screen[th.address] = L.screenLines(r.stdout);
         }
       } finally {
-        this.busy = false;
+        // A read started before ctrl-g switched views doesn't free the newer one's turn.
+        if (gen === this.gen) this.busy = false;
         cx.notify();
       }
     });
@@ -150,6 +209,13 @@ export default class Agents extends View {
   maxOffset(th) {
     const lines = (th && (this.diff ? this.diffs[th.address] : this.screen[th.address])) ?? [];
     return Math.max(0, lines.length - this.previewRows);
+  }
+
+  // A click selects (shift: marks too), a double click goes there.
+  click(x, ev, cx) {
+    if (ev.click_count > 1) { this.close(); L.go(x); return; }
+    if (ev.modifiers?.shift) this.toggleMark(x);
+    this.sel = x.address; this.offset = 0; this.refresh(cx); cx.notify();
   }
 
   move(items, d) {
@@ -171,16 +237,18 @@ export default class Agents extends View {
     if (this.help) { this.help = false; }
     else if (k === "escape") {
       if (this.replying) this.endReply();
+      else if (this.marked.size) this.marked.clear();
       else return this.close();
     }
+    else if (c && k === "t" && th) { this.toggleMark(th); this.move(items, 1); this.refresh(cx); }
     else if (k === "down" || (c && (k === "n" || k === "j"))) { this.move(items, 1); this.refresh(cx); }
     else if (k === "up" || (c && (k === "p" || k === "k"))) { this.move(items, -1); this.refresh(cx); }
     else if (k === "enter" && it?.shelf) { this.open[it.shelf] = !this.open[it.shelf]; }
-    else if (c && k === "y" && th) cx.spawn(async () => L.approve(th));
-    else if (c && k === "x" && th) cx.spawn(async () => L.deny(th));
+    else if (c && k === "y" && th) { const ts = this.targets(th); cx.spawn(async () => { for (const x of ts) await L.approve(x); }); }
+    else if (c && k === "x" && th) { const ts = this.targets(th); cx.spawn(async () => { for (const x of ts) await L.deny(x); }); }
     else if (c && k === "o" && th && !th.closed) { this.replying = th.address; this.input.set_value(""); this.input.focus(); }
-    else if (c && k === "s" && th) cx.spawn(async () => L.markSeen(th));
-    else if (c && k === "g") { this.diff = !this.diff; this.offset = 0; this.busy = false; this.refresh(cx); }
+    else if (c && k === "s" && th) { const ts = this.targets(th); cx.spawn(async () => { for (const x of ts) await L.markSeen(x); }); }
+    else if (c && k === "g") { this.diff = !this.diff; this.offset = 0; this.gen++; this.busy = false; this.refresh(cx); }
     else if (c && (k === "d" || k === "u")) {
       const half = Math.floor(this.previewRows / 2);
       const down = k === "d";
@@ -188,12 +256,22 @@ export default class Agents extends View {
       this.offset = Math.max(0, Math.min(this.maxOffset(th), this.offset + (this.diff === down ? half : -half)));
     }
     else if (a && (k === "space" || k === "m")) this.menu(th, cx);
-    else if (a && k === "p" && th) L.togglePin(th);
-    else if (a && k === "s" && th) L.toggleSettle(th);
-    else if (a && k === "z" && th) L.snooze(th, Date.now() + 3600e3);
-    else if (a && k === "e" && th) L.wake(th);
+    else if (a && k === "p" && th) this.bulk("pin", th);
+    else if (a && k === "s" && th) this.bulk("settle", th);
+    else if (a && k === "z" && th) this.bulk("snooze", th);
+    else if (a && k === "e" && th) this.bulk("wake", th);
     else if (a && k === "b" && th?.cwd) L.openPR(th);
-    else if (a && k === "w" && th) L.closeThread(th);
+    else if (a && k === "w" && th) {
+      if (!this.marked.size) L.closeThread(th);
+      else if (Date.now() - this.armed < 3000) {
+        this.armed = 0;
+        for (const x of this.targets(th)) L.closeThread(x, { confirmed: true });
+        this.marked.clear();
+      } else {
+        this.armed = Date.now();
+        notify({ title: `Press again to close ${this.marked.size} threads`, body: "Their agents stop and their panes close; closed ones are forgotten.", level: "warning", timeout: 3000 });
+      }
+    }
     else if (a && k === "d" && th?.cwd) { this.close(); L.review(th); return; }
     else if (k === "f1") this.help = true;
     else return;
@@ -226,9 +304,10 @@ export default class Agents extends View {
       const f = this.facts.of(x);
       list.push(L.threadRow(t, x, {
         selected: x.address === this.sel, now, need: f.need, git: f.git, id: `ag-${x.address}`, wide: true,
+        marked: this.marked.has(x.address), snippet: this.snippet(x),
         onMenu: (e, cx) => this.menu(x, cx, { x: e.position.x, y: e.position.y }),
           onMove: (e) => { this.rowAt[x.address] = { x: e.position.x - e.local_position.x, y: e.position.y - e.local_position.y, h: e.bounds?.height ?? 46 }; },
-        onClick: (ev, cx) => { if (ev.click_count > 1) { this.close(); L.go(x); } else { this.sel = x.address; this.offset = 0; this.refresh(cx); cx.notify(); } },
+        onClick: (ev, cx) => this.click(x, ev, cx),
       }));
     };
     if (m.pinned.length) { list.push(L.sectionHead(t, "pin", "PINNED", m.pinned.length)); m.pinned.forEach(row); }
@@ -252,9 +331,10 @@ export default class Agents extends View {
         if (x.address === this.sel) selShelf = shelves.length;
         const f = this.facts.of(x);
         shelves.push(L.threadRow(t, x, { selected: x.address === this.sel, now, need: f.need, git: f.git, id: `as-${x.address}`, wide: true,
+          marked: this.marked.has(x.address), snippet: this.snippet(x),
           onMenu: (e, cx) => this.menu(x, cx, { x: e.position.x, y: e.position.y }),
           onMove: (e) => { this.rowAt[x.address] = { x: e.position.x - e.local_position.x, y: e.position.y - e.local_position.y, h: e.bounds?.height ?? 46 }; },
-          onClick: (ev, cx) => { if (ev.click_count > 1) { this.close(); L.go(x); } else { this.sel = x.address; this.offset = 0; this.refresh(cx); cx.notify(); } } }));
+          onClick: (ev, cx) => this.click(x, ev, cx) }));
       }
     }
     // Bring the selection into view when it changes, not on every redraw (the timer
@@ -283,7 +363,7 @@ export default class Agents extends View {
       .text_color(t.foreground)
       .child(L.hatchTitle(t, "Agents", div().id("ag-new").cursor_pointer().text_color(t.accent).on_click(() => { this.close(); run("tab.new", { argv: ["claude"] }); }).child("+")))
       .child(h_flex().items_center().gap(10).text_color(t.muted)
-        .child(div().flex_1().child(`all spaces · ${m.all.filter((x) => !x.closed).length}`))
+        .child(div().flex_1().child(`all spaces · ${m.all.filter((x) => !x.closed).length}${this.marked.size ? ` · ${this.marked.size} marked (esc clears)` : ""}`))
         .when(m.counts.blocked > 0, (el) => el.child(badge("bell", t.blocked, m.counts.blocked)))
         .when(m.counts.working > 0, (el) => el.child(badge("working", t.working, m.counts.working)))
         .when(m.counts.done > 0, (el) => el.child(badge("check", t.done, m.counts.done))))
@@ -301,7 +381,7 @@ export default class Agents extends View {
       )
       .child(h_flex().flex_none().h(40).gap(8).items_center().border_t(1).border_color(t.border).mt(6)
         .child(hint("^y", "approve")).child(dot()).child(hint("^x", "deny")).child(dot()).child(hint("^o", "reply")).child(dot())
-        .child(hint("↵", "go")).child(dot()).child(hint("alt+z", "snooze")).child(dot()).child(hint("^g", this.diff ? "screen" : "diff")).child(dot()).child(hint("alt+m", "more")).child(dot()).child(hint("f1", "keys")));
+        .child(hint("↵", "go")).child(dot()).child(hint("alt+z", "snooze")).child(dot()).child(hint("^g", this.diff ? "screen" : "diff")).child(dot()).child(hint("alt+m", "more")).child(dot()).child(hint("^t", "mark")).child(dot()).child(hint("f1", "keys")));
   }
 
   keysView(t) {

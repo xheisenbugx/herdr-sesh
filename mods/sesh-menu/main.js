@@ -3,7 +3,8 @@
 // a right click on a thread, `space` / `m` in the sidebar, or alt+space / alt+m
 // in the agent picker. Without a thread it's the sidebar's own options.
 // Snooze and Sidebar open their own lists in place; Reply… asks for the text here.
-// Props: { address, from: "sidebar" | "picker", pr: { number } | null, overlay }.
+// Clean up merged branch… asks first, in its own view (also opened by the "PR merged" notification).
+// Props: { address, from: "sidebar" | "picker" | "terminal" | "notification", pr, view, picker, overlay }.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
@@ -13,7 +14,7 @@ import * as L from "./lib.js";
 export default class Menu extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
-    this.view = props()?.view === "snooze" ? "snooze" : "main"; // main | snooze | reply | more | when
+    this.view = props()?.view === "snooze" || props()?.view === "cleanup" ? props().view : "main"; // main | snooze | reply | more | when | cleanup
     this.idx = 0;
     this.error = "";
     this.inputs = {
@@ -60,6 +61,7 @@ export default class Menu extends View {
     const th = this.thread();
     if (action === "snooze") { this.view = "snooze"; this.idx = 0; return cx.notify(); }
     if (action === "more") { this.view = "more"; this.idx = 0; return cx.notify(); }
+    if (action === "cleanup") { this.view = "cleanup"; return cx.notify(); }
     if (action === "reply" || action === "when") {
       this.view = action === "reply" ? "reply" : "when";
       this.error = "";
@@ -93,6 +95,13 @@ export default class Menu extends View {
   key(e, cx) {
     const k = e.key;
     const ch = e.key_char ?? "";
+    if (this.view === "cleanup") {
+      if (k === "enter") { this.dismiss(true); L.runAction("cleanupNow", this.thread()); }
+      else if (k === "escape") { if (props()?.view === "cleanup") this.dismiss(); else this.view = "main"; }
+      else return;
+      cx.stop_propagation();
+      return cx.notify();
+    }
     if (this.view === "reply" || this.view === "when") {
       if (k === "escape") { this.view = this.view === "when" ? "snooze" : "main"; this.handle.focus(); cx.stop_propagation(); cx.notify(); }
       return;
@@ -126,9 +135,18 @@ export default class Menu extends View {
     const th = this.thread();
     const items = this.items();
     if (items[this.idx]?.[0] === "sep" || !items[this.idx]) this.idx = items.findIndex((x) => x[0] !== "sep");
-    const title = this.view === "snooze" ? "Snooze until" : this.view === "more" || !th ? "Sidebar" : this.view === "when" ? "Snooze until" : this.view === "reply" ? `Reply to ${th?.title ?? ""}` : th.title;
+    const title = this.view === "cleanup" ? `Clean up ${th?.branch ?? ""}?` : this.view === "snooze" ? "Snooze until" : this.view === "more" || !th ? "Sidebar" : this.view === "when" ? "Snooze until" : this.view === "reply" ? `Reply to ${th?.title ?? ""}` : th.title;
 
-    const body = this.view === "reply" || this.view === "when"
+    const body = this.view === "cleanup"
+      ? v_flex().px(10).py(8).gap(6).text_size(12)
+        .child(div().text_color(t.muted).child(`Closes its space (its agent stops), removes the worktree at ${(th?.cwd ?? "").replace(/^\/Users\/[^/]+/, "~")} and deletes the branch.`))
+        .child(div().text_color(t.dim).child("Kept if it has uncommitted changes."))
+        .child(h_flex().gap(8).pt(2)
+          .child(div().id("cl-yes").px(8).py(3).rounded(4).bg(t.blocked).text_color(t.background).cursor_pointer()
+            .on_click(() => { this.dismiss(true); L.runAction("cleanupNow", this.thread()); }).child("↵ Clean up"))
+          .child(div().id("cl-no").px(8).py(3).rounded(4).bg(t.raised).cursor_pointer()
+            .on_click((_e, cx) => { if (props()?.view === "cleanup") this.dismiss(); else { this.view = "main"; cx.notify(); } }).child("esc Keep")))
+      : this.view === "reply" || this.view === "when"
       ? v_flex().px(10).py(8).gap(6)
         .child(h_flex().h(28).px(8).gap(6).items_center().rounded(4).border_1().border_color(t.accent).bg(t.background)
           .child(div().text_color(t.accent).font_bold().child("›"))

@@ -41,10 +41,10 @@ The ANSI colours are Catppuccin-like. `ui_font` is JetBrains Mono.
 
 **Thread row:**
 
-- Line 1: an unread `•`, a 12px status glyph, the title (bold when selected, unread or waiting), the age (`2m`) in dim, and a `●` when unread.
+- Line 1: an unread `•` (a bold `✓` when marked in the agent picker), a 12px status glyph, the title (bold when selected, unread or waiting), the age (`2m`) in dim (bold, in blocked, while it waits on you), and a `●` when unread.
 - Line 2, indented 23px:
-  - the space name, `·`, then the detail, coloured by status: "Allow Bash: npm test" in blocked, "finished" in done, "› working 42s" in muted, "idle" in dim, or "snoozed until 18:00";
-  - on the right: the branch (pickers only, not main/master), `↑n` `↓n`, and a PR icon with `#42`, green while open and accent when merged.
+  - the space name, `·`, then the detail, coloured by status: "Allow Bash: npm test" (or "needs you · 12m") in blocked, "finished" in done, "› working 42s" in muted, "idle" in dim, or "snoozed until 18:00"; in the agent picker, a thread found by its screen text shows the matching line in quotes instead;
+  - on the right: the branch (pickers only, not main/master), `↑n` `↓n`, and a PR icon with `#42`, green while open, dim as a draft, accent when merged; an open PR adds its checks: `✓` done colour, `•` working colour, `✗` blocked colour.
 
 **Agent picker** (`sesh-agents`, a dialog 94% × 90%, frame none, radius 10):
 
@@ -85,13 +85,13 @@ The ANSI colours are Catppuccin-like. `ui_font` is JetBrains Mono.
 - Inbox: everything else, newest status change first.
 - Working.
 - Snoozed: until a time.
-- Settled: by hand, after 7 days idle, or once its PR is merged.
+- Settled: by hand, after 7 days idle (config `[threads] settle_after`), or once its PR is merged. A merged PR on a linked worktree also posts a notification whose click opens the actions menu's "Clean up …?" view.
 
 **Moves between sections:**
 
 - An agent that turns blocked leaves a snooze.
 - An agent that turns working or blocked after being settled leaves Settled.
-- A closed Claude Code pane leaves a *closed* thread in Settled for two weeks. Enter resumes it with `claude --resume <id>` in its space and folder.
+- A closed Claude Code pane leaves a *closed* thread in Settled for two weeks (config `[threads] forget_closed_after`). Enter resumes it with `claude --resume <id>` in its space and folder.
 
 **Sidebar keys** (it's `focusable`; `cmd-shift-b` enters and leaves):
 
@@ -111,13 +111,16 @@ The ANSI colours are Catppuccin-like. `ui_font` is JetBrains Mono.
 - last, agent-last;
 - need-next (blocked first, then done, waiting longest first);
 - pin, settle, snooze, wake;
-- thread-next / prev / `thread:N`;
+- thread-next / prev / `thread:N`, through `shownOrder()`: the sidebar's order with its `only` and `group` options from `shared("sesh.view")`, so `cmd-ctrl-3` and the sidebar's `3` are the same thread;
 - pane-next / prev;
-- sidebar.
+- sidebar; toggle-sidebar (`cmd-b`: sends `sesh-sidebar.hide`, which hands the keyboard back only if the sidebar has it);
+- cleanup:`<address>` (git status must be clean; `space.close`, then `lib.js`'s `CLEANUP` script on the thread's machine: `git worktree remove` from the main checkout and `git branch -D`; a toast reports it) and ask-cleanup:`<address>` (the notification's action).
 
-`sesh-bar` also polls every second. It stamps status changes, expires snoozes, records the previous space, captures Claude Code session ids, and copies `.worktreeinclude` files into fresh worktrees.
+`sesh-bar` also polls every second. It stamps status changes, expires snoozes, records the previous space, captures Claude Code session ids, and copies `.worktreeinclude` files into fresh worktrees. Every 10 s it reads `~/.config/herdr-sesh/config.toml` into `shared("sesh.config")` (`parseConfig`: every `[table]`'s plain keys). Its attention chips add the longest wait in that space (`api 12m`), longest first, redrawn every 30 s.
 
-The toast mod also runs `osascript` to post a macOS notification while Herdr isn't active.
+The toast mod also runs `osascript` to post a macOS notification while Herdr isn't active, except inside `[notifications] quiet_hours` ("22:00-08:00", may cross midnight).
+
+**Agent picker extras:** `ctrl-t` or shift-click marks threads; `ctrl-y` / `ctrl-x` / `ctrl-s` and `alt-p` / `s` / `z` / `e` then act on every marked one (`L.together()` makes them one undo step; pin and settle go one way for all). `alt-w` with marks asks for a second press within 3 s. Esc clears marks before it closes. A filter of 3+ letters also matches each agent's screen (`hc read --lines 200`, every 4 s while the filter is that long). A ctrl-g switch bumps a generation number so an older read can't free the newer one's turn.
 
 ## Built from
 
@@ -126,9 +129,9 @@ The toast mod also runs `osascript` to post a macOS notification while Herdr isn
   - the `work` column, containing:
     - the `tabs-row`: `tabs` (shipped) and `attention` (`sesh-bar`);
     - `main`: the active tab.
-- **`lib.js`** (in `sesh-sidebar`, copied into `sesh-agents`, `sesh-sessions`, `sesh-bar` and `sesh-menu` by `sync-lib.sh`). It holds:
+- **`lib.js`** (in `sesh-sidebar`, copied into `sesh-agents`, `sesh-sessions`, `sesh-bar`, `sesh-menu` and `sesh-term-menu` by `sync-lib.sh`; `sync-lib.sh --check` fails when a copy differs). It holds:
   - the state in `shared("sesh")`: changed, pins, settled, snoozed, merged, sessions, closed, prev / cur, history, undo;
-  - `track()`, `threads()` (the sections and order), the actions, `threadRow()`, `Facts` (polls `needOf` every 2.5s and git/gh every 20s, with the PR cached for 2 minutes), and the menus.
+  - `track()`, `threads()` (the sections and order), the actions, `threadRow()`, `Facts` (polls `needOf` every 2.5s and git/gh every 20s, with the PR cached for 2 minutes, 30 s while its checks run; `gh pr view --json number,state,isDraft,statusCheckRollup`), the config helpers, and the menus.
 - **Herdr functions and commands it uses:**
   - functions: `agents`, `panes`, `spaces`, `terminals`, `focused`, `shared` / `setShared`, `setAgentOrder`, `openOverlay`, `nextCommand`, `exec`, `hc`, `readTextFile`, `notify`;
   - commands: `agent.focus`, `terminal.pin`, `terminal.open`, `tab.new`, `tab.rename`, `space.new`, `space.select`, `space.close`, `pane.close`, `pane.focus`, `layout.toggle`, `layout.show`, `layout.hide`, `layout.resize`.
@@ -137,7 +140,8 @@ The toast mod also runs `osascript` to post a macOS notification while Herdr isn
 
 ## Watch out
 
-- Mods can't import across folders. Keep the `lib.js` copies identical.
+- Mods can't import across folders. Keep the `lib.js` copies identical (`scripts/check.sh` checks it, in CI and as a pre-commit hook).
+- `herdr-app check` doesn't run deferred code: test `lib.js`'s pure functions (config, durations, `checksOf`) outside Herdr.
 - Write a new mod's `mod.json` before its `main.js`, or Herdr docks it into the layout you're looking at.
 - Only one `sesh-bar` copy may exist in the layout. Every copy would receive the global key commands and act twice.
 - "What it needs" is parsed from Claude Code's permission box on screen (the "Do you want…" line and the box above it). Other agents fall back to "needs you".
@@ -156,3 +160,8 @@ The toast mod also runs `osascript` to post a macOS notification while Herdr isn
 - `z` → "1 hour" moves a thread to Snoozed, and it comes back the moment the agent blocks.
 - `cmd-j` cycles through blocked agents, then done ones.
 - `install.sh --uninstall` removes every file and the keys sections it added.
+- With "This session only" on, `cmd-ctrl-1` goes to the sidebar's first row.
+- `cmd-b` while the sidebar has the keyboard hides it and typing goes to the terminal.
+- A branch with an open PR shows `#n` with `✓`, `•` or `✗`; a merged one on a worktree offers "Clean up", which refuses a dirty worktree.
+- In the picker, `ctrl-t` on two threads then `alt-z` snoozes both, and one `u` in the sidebar wakes both.
+- `settle_after = "1m"` settles an idle thread a minute later.

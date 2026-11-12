@@ -23,6 +23,44 @@ export const ICON = (name) => `mods/sesh-sidebar/${name}.svg`;
 export const WEEK = 7 * 86400000;
 const MAIN = /^(main|master|trunk|develop)$/;
 
+// ~/.config/herdr-sesh/config.toml, as sesh-bar last read it (shared("sesh.config")):
+//   [threads]        settle_after = "7d"  forget_closed_after = "14d"
+//   [notifications]  quiet_hours = "22:00-08:00"
+export const CONFIG_PATH = ".config/herdr-sesh/config.toml";
+export function config() { return shared("sesh.config") ?? {}; }
+// Every [table]'s plain keys (strings, numbers, booleans); [[arrays]] are left out.
+export function parseConfig(text) {
+  const out = {};
+  let cur = null;
+  for (const raw of (text ?? "").split("\n")) {
+    const line = raw.replace(/^\s+/, "");
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("[[")) { cur = null; continue; }
+    const head = line.match(/^\[\s*([\w-]+)\s*\]/);
+    if (head) { cur = out[head[1]] ??= {}; continue; }
+    const m = line.match(/^([\w-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(true|false)|(-?\d+(?:\.\d+)?))\s*(?:#.*)?$/);
+    if (!m || !cur) continue;
+    cur[m[1]] = m[2] !== undefined ? m[2].replace(/\\(.)/g, "$1") : m[3] !== undefined ? m[3] : m[4] !== undefined ? m[4] === "true" : Number(m[5]);
+  }
+  return out;
+}
+// "90m", "4h", "7d", "2w" (or a number of seconds) in ms; null when it isn't one.
+export function parseDuration(x) {
+  if (typeof x === "number") return x > 0 ? x * 1000 : null;
+  const m = String(x ?? "").trim().match(/^(\d+(?:\.\d+)?)\s*(s|m|h|d|w)$/);
+  return m && Number(m[1]) > 0 ? Number(m[1]) * { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[m[2]] : null;
+}
+export const settleAfter = () => parseDuration(config().threads?.settle_after) ?? WEEK;
+export const forgetClosedAfter = () => parseDuration(config().threads?.forget_closed_after) ?? 2 * WEEK;
+// Inside [notifications] quiet_hours ("22:00-08:00": it may run past midnight).
+export function quietNow(now = new Date()) {
+  const m = String(config().notifications?.quiet_hours ?? "").match(/^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$/);
+  if (!m) return false;
+  const from = Number(m[1]) * 60 + Number(m[2]), to = Number(m[3]) * 60 + Number(m[4]);
+  const t = now.getHours() * 60 + now.getMinutes();
+  return from <= to ? t >= from && t < to : t >= from || t < to;
+}
+
 export function state() {
   const s = shared("sesh") ?? {};
   return {
@@ -39,21 +77,32 @@ export function patch(fn, { undo = false } = {}) {
     ...s, settled: { ...s.settled }, snoozed: { ...s.snoozed }, pins: [...s.pins], changed: { ...s.changed },
     merged: { ...s.merged }, history: [...s.history], sessions: { ...s.sessions }, missing: { ...s.missing }, closed: { ...s.closed },
   }) ?? s;
-  if (undo) {
-    const was = {};
-    for (const key of UNDOABLE) {
-      was[key] = {};
-      for (const k of new Set([...Object.keys(s[key]), ...Object.keys(next[key])])) {
-        if (JSON.stringify(s[key][k]) !== JSON.stringify(next[key][k])) was[key][k] = s[key][k] ?? null;
-      }
-    }
-    // Pins: the addresses this action pinned or unpinned, and whether each was pinned.
-    const before = new Set(s.pins), after = new Set(next.pins);
-    was.pins = {};
-    for (const a of new Set([...before, ...after])) if (before.has(a) !== after.has(a)) was.pins[a] = { pinned: before.has(a), at: s.pins.indexOf(a) };
-    next.undo = was;
-  }
+  if (undo && !batch) next.undo = undoStep(s, next);
   setShared("sesh", next);
+}
+// What undo puts back to go from `next` to `s`: the entries that changed, and the pins.
+function undoStep(s, next) {
+  const was = {};
+  for (const key of UNDOABLE) {
+    was[key] = {};
+    for (const k of new Set([...Object.keys(s[key]), ...Object.keys(next[key])])) {
+      if (JSON.stringify(s[key][k]) !== JSON.stringify(next[key][k])) was[key][k] = s[key][k] ?? null;
+    }
+  }
+  // Pins: the addresses this action pinned or unpinned, and whether each was pinned.
+  const before = new Set(s.pins), after = new Set(next.pins);
+  was.pins = {};
+  for (const a of new Set([...before, ...after])) if (before.has(a) !== after.has(a)) was.pins[a] = { pinned: before.has(a), at: s.pins.indexOf(a) };
+  return was;
+}
+// Several actions as one undo step (the agent picker's marked threads).
+let batch = false;
+export function together(fn) {
+  const s = state();
+  batch = true;
+  try { fn(); } finally { batch = false; }
+  const next = state();
+  setShared("sesh", { ...next, undo: undoStep(s, next) });
 }
 export function undo() {
   const s = state();
@@ -141,8 +190,9 @@ export function track(now = Date.now()) {
   }
   history = history.filter((x) => live.has(x));
   if (history.length !== s.history.length) dirty = true;
-  // Closed threads go after two weeks.
-  for (const [id, c] of Object.entries(closed)) if (now - (c.at ?? 0) > 2 * WEEK) { delete closed[id]; dirty = true; }
+  // Closed threads go after two weeks (or [threads] forget_closed_after).
+  const forgetAfter = forgetClosedAfter();
+  for (const [id, c] of Object.entries(closed)) if (now - (c.at ?? 0) > forgetAfter) { delete closed[id]; dirty = true; }
   const pins = s.pins.filter((p) => live.has(p) || changed[p]);
   if (pins.length !== s.pins.length) dirty = true;
   if (dirty) setShared("sesh", { ...s, changed, settled, snoozed, merged, missing, sessions, closed, history, pins });
@@ -216,11 +266,15 @@ export function machineOf(spaceId) {
   return spaces().find((p) => p.id === spaceId)?.machine ?? null;
 }
 
-export function threads({ filter = "", space = null, now = Date.now() } = {}) {
+// `content(thread)`: more text to look for the filter in, as written (the agent picker
+// passes what's on each agent's screen).
+export function threads({ filter = "", space = null, now = Date.now(), content = null } = {}) {
   const s = state();
+  const idleFor = settleAfter();
   const paneOf = new Map(panes().map((p) => [p.pane, p]));
   const machineOfSpace = new Map(spaces().map((p) => [p.id, p.machine ?? null]));
   const fz = fuzzy(filter);
+  const needle = filter.trim().toLowerCase();
   const liveIds = new Set(Object.values(s.sessions).map((x) => x?.id));
   const closed = Object.values(s.closed)
     // Just resumed: out of sight while it starts (it's dropped once it's seen running).
@@ -249,13 +303,13 @@ export function threads({ filter = "", space = null, now = Date.now() } = {}) {
         unread: a.status === "done",
         at,
         pinned: a.pinned,
-        settled: !!s.settled[a.address] || (a.status === "idle" && at && now - at > WEEK),
+        settled: !!s.settled[a.address] || (a.status === "idle" && at && now - at > idleFor),
         snoozed: s.snoozed[a.address] && s.snoozed[a.address] > now ? s.snoozed[a.address] : null,
       };
     })
     .concat(closed)
     .filter((t) => !space || t.space === space)
-    .filter((t) => !filter || fz(`${t.title} ${t.spaceName} ${t.branch ?? ""}`));
+    .filter((t) => !filter || fz(`${t.title} ${t.spaceName} ${t.branch ?? ""}`) || (needle.length >= 3 && !!content?.(t)?.toLowerCase().includes(needle)));
   const pinOrder = (t) => { const i = s.pins.indexOf(t.address); return i < 0 ? 1e9 : i; };
   const byRecent = (x, y) => y.at - x.at;
   const pinned = all.filter((t) => t.pinned).sort((x, y) => pinOrder(x) - pinOrder(y));
@@ -280,6 +334,13 @@ export function groupInbox(inbox) {
 // agent.next go through.
 export function listOrder(m, group = !!shared("sesh.view")?.group) {
   return [...m.pinned, ...(group ? groupInbox(m.inbox) : m.inbox), ...m.working].filter((t) => !t.closed);
+}
+
+// The order the sidebar shows now (its "this session only" and "group" options, not a
+// typed filter): what cmd-ctrl-1…9 and cmd-ctrl-j/k go through, as 1–9 in the sidebar.
+export function shownOrder() {
+  const v = shared("sesh.view") ?? {};
+  return listOrder(threads({ space: v.only ? focused()?.space ?? null : null }), !!v.group);
 }
 
 export function fuzzy(q) {
@@ -472,6 +533,7 @@ export function threadMenu(t, { pr = null, pinnedCount = 0 } = {}) {
   items.push(["more", "Sidebar", "›", "more"], ["sep"]);
   items.push(["x", "Close pane", "X", "closeThreadNow", true]);
   if (t.branch && !MAIN.test(t.branch)) items.push(["box", "Archive worktree…", "A", "archive", true]);
+  if (t.branch && !MAIN.test(t.branch) && pr?.state === "MERGED") items.push(["trash", "Clean up merged branch…", "C", "cleanup", true]);
   return items;
 }
 // What isn't about one thread: the sidebar's own options.
@@ -497,6 +559,7 @@ export function runAction(name, t) {
   if (name === "pinDown") return movePin(t, 1);
   if (name === "undo") return undo();
   if (name === "closeThreadNow") return closeThread(t, { confirmed: true });
+  if (name === "cleanupNow") return t && !t.closed && run(`sesh-bar.cleanup:${t.address}`);
   if (name.startsWith("view:")) {
     // The sidebar only hears its commands while it's shown: when it's hidden, show it and
     // let sesh-bar (always shown) pass the command on a moment later.
@@ -522,11 +585,12 @@ export function openMenu(t, { at = "pointer", from = "sidebar", pr = null, view 
   });
 }
 // The menu items that take you away from the agent picker (it closes for them).
-export const LEAVES_PICKER = new Set(["go", "review", "rename", "newThread", "newWorktreeThread", "archive", "view:help", "view:group", "view:only"]);
+export const LEAVES_PICKER = new Set(["go", "review", "rename", "newThread", "newWorktreeThread", "archive", "cleanupNow", "view:help", "view:group", "view:only"]);
 // The sidebar's own items the picker's menu leaves out (they're about the sidebar's look).
 export const viewMenuFor = (from, opts) => viewMenu(opts).filter((x) => from !== "picker" || !/^view:(filter|narrow|wide|hide)$/.test(x[3] ?? ""));
 // The popup's height for its items (sesh-menu draws rows 26 px, lines 9 px, a 36 px head).
 export function menuHeight(t, { pr = null, view = "main", from = "sidebar" } = {}) {
+  if (view === "cleanup") return 36 + 128;
   const items = view === "snooze" ? new Array(6).fill(["x"]) : t ? threadMenu(t, { pr, pinnedCount: threads().pinned.length }) : viewMenuFor(from);
   return 36 + 8 + items.reduce((h, x) => h + (x[0] === "sep" ? 9 : 26), 0) + 2;
 }
@@ -595,14 +659,42 @@ export async function aheadBehind(cwd, on = null) {
     return null;
   }
 }
+// Whether a folder is in a linked worktree: its git dir isn't the repo's common one.
+const LINKED = 'd=$(git rev-parse --git-dir 2>/dev/null) && c=$(git rev-parse --git-common-dir) && ' +
+  'd=$(cd "$d" && pwd -P) && c=$(cd "$c" && pwd -P) || exit 1; [ "$d" != "$c" ] && echo linked || echo main';
+export async function isWorktree(cwd, on = null) {
+  try {
+    const r = await exec("sh", ["-c", LINKED], { cwd, on, timeout: 4000 });
+    return r.code === 0 ? r.stdout.trim() === "linked" : false;
+  } catch { return false; }
+}
+// Removes a merged branch's worktree and deletes the branch, from the repo's own checkout.
+// Refuses a folder with uncommitted changes, or one that isn't a linked worktree.
+export const CLEANUP = 'set -e; cd "$1"; top=$(git rev-parse --show-toplevel); b=$(git symbolic-ref -q --short HEAD || true); ' +
+  'd=$(cd "$(git rev-parse --git-dir)" && pwd -P); c=$(cd "$(git rev-parse --git-common-dir)" && pwd -P); ' +
+  '[ "$d" != "$c" ] || { echo "it is the repo\'s own checkout, not a worktree" >&2; exit 3; }; ' +
+  '[ -z "$(git status --porcelain)" ] || { echo "it has uncommitted changes" >&2; exit 3; }; ' +
+  'main=$(git worktree list --porcelain | sed -n "1s/^worktree //p"); cd "$main"; ' +
+  'git worktree remove "$top"; [ -z "$b" ] || git branch -D "$b" >/dev/null; echo "$b"';
+
+// The branch's pull request: { number, state, draft, checks: "fail" | "pending" | "pass" | null }.
 export async function pullRequest(cwd, on = null) {
   try {
-    const r = await exec("gh", ["pr", "view", "--json", "number,state"], { cwd, on, timeout: 8000 });
+    const r = await exec("gh", ["pr", "view", "--json", "number,state,isDraft,statusCheckRollup"], { cwd, on, timeout: 8000 });
     if (r.code !== 0) return null;
-    return JSON.parse(r.stdout);
+    const pr = JSON.parse(r.stdout);
+    return { number: pr.number, state: pr.state, draft: !!pr.isDraft, checks: checksOf(pr.statusCheckRollup) };
   } catch {
     return null;
   }
+}
+// One word for a PR's checks: a check run has status and conclusion, a commit status a state.
+export function checksOf(list) {
+  if (!Array.isArray(list) || !list.length) return null;
+  const BAD = /^(FAILURE|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED|STARTUP_FAILURE)$/;
+  if (list.some((c) => BAD.test(c.conclusion ?? "") || BAD.test(c.state ?? ""))) return "fail";
+  if (list.some((c) => (c.status && c.status !== "COMPLETED") || /^(PENDING|EXPECTED)$/.test(c.state ?? ""))) return "pending";
+  return "pass";
 }
 
 // ── Look ────────────────────────────────────────────────────────────
@@ -651,11 +743,14 @@ export function sectionHead(t, icon, label, count) {
 // `hovered` shows the pin, snooze and settle buttons; `onAct(name, cx)` runs one,
 // `onMenu(event, cx)` opens the menu on a right click, `onPR` opens its PR;
 // `onMove(event, cx)` hears the pointer moving over the row (where the row is on screen).
-export function threadRow(t, th, { selected = false, need = null, git = null, now = Date.now(), id, onClick, wide = false, hovered = false, onHover, onAct, onMenu, onMove } = {}) {
+// `snippet`: the line that matched the filter (shown instead of the status words);
+// `marked`: picked for a bulk action (the agent picker).
+export function threadRow(t, th, { selected = false, need = null, git = null, now = Date.now(), id, onClick, wide = false, hovered = false, onHover, onAct, onMenu, onMove, snippet = null, marked = false } = {}) {
   const detail = (() => {
+    if (snippet && !(th.status === "blocked" && need)) return [t.muted, `“${snippet}”`];
     if (th.closed) return [t.dim, "closed · ↵ resumes"];
     if (th.snoozed) return [t.muted, `snoozed until ${fmtTime(th.snoozed)}`];
-    if (th.status === "blocked") return [t.blocked, need ?? "needs you"];
+    if (th.status === "blocked") return [t.blocked, need ?? (th.at ? `needs you · ${age(now - th.at)}` : "needs you")];
     if (th.status === "working") return [t.muted, th.at ? `› working ${age(now - th.at)}` : "› working"];
     if (th.status === "done") return [t.done, "finished"];
     return [t.dim, "idle"];
@@ -670,14 +765,22 @@ export function threadRow(t, th, { selected = false, need = null, git = null, no
     .when(wide && !!branch, (el) => el.child(div().max_w(160).truncate().child(branch)))
     .when(!!git?.ab?.ahead, (el) => el.child(`↑${git.ab.ahead}`))
     .when(!!git?.ab?.behind, (el) => el.child(`↓${git.ab.behind}`))
-    .when(!!git?.pr, (el) => el.child(
-      div().id(`${id}-pr`).flex().flex_row().items_center().gap(2).cursor_pointer()
-        .text_color(git.pr.state === "MERGED" ? t.accent : git.pr.state === "CLOSED" ? t.dim : t.done)
-        .hover((s) => s.text_color(t.foreground))
-        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .on_click((_e, cx) => { cx.stop_propagation(); onAct?.("openPR", cx); })
-        .child(svg(ICON("pr")).size(11).text_color(git.pr.state === "MERGED" ? t.accent : t.done))
-        .child(`#${git.pr.number}`)));
+    .when(!!git?.pr, (el) => {
+      const pr = git.pr;
+      const open = pr.state === "OPEN";
+      const c = pr.state === "MERGED" ? t.accent : pr.state === "CLOSED" || pr.draft ? t.dim : t.done;
+      // An open PR's checks: ✗ failing, • running, ✓ passed.
+      const checks = open && pr.checks ? { fail: [t.blocked, "✗"], pending: [t.working, "•"], pass: [t.done, "✓"] }[pr.checks] : null;
+      return el.child(
+        div().id(`${id}-pr`).flex().flex_row().items_center().gap(2).cursor_pointer()
+          .text_color(c)
+          .hover((s) => s.text_color(t.foreground))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_click((_e, cx) => { cx.stop_propagation(); onAct?.("openPR", cx); })
+          .child(svg(ICON("pr")).size(11).text_color(c))
+          .child(`#${pr.number}`)
+          .when(!!checks, (x) => x.child(div().text_color(checks[0]).font_bold().child(checks[1]))));
+    });
   const showButtons = hovered && !!onAct && !th.closed;
   return div()
     .id(id)
@@ -689,6 +792,7 @@ export function threadRow(t, th, { selected = false, need = null, git = null, no
     .py(4)
     .cursor_pointer()
     .when(selected, (el) => el.bg(t.selected).border_l(3).border_color(t.accent))
+    .when(marked && !selected, (el) => el.bg(t.hover))
     .hover((s) => (selected ? s : s.bg(t.hover)))
     .when(!!onHover, (el) => el.on_hover((h, cx) => onHover(h, cx)))
     .when(!!onMove, (el) => el.on_mouse_move((e, cx) => onMove(e, cx)))
@@ -696,7 +800,7 @@ export function threadRow(t, th, { selected = false, need = null, git = null, no
     .when(!!onMenu, (el) => el.on_mouse_down("right", (e, cx) => { cx.stop_propagation(); onMenu(e, cx); }))
     .child(
       div().flex().flex_row().items_center().gap(5).w_full()
-        .child(div().w(6).flex_none().text_color(t.accent).child(th.unread ? "•" : ""))
+        .child(div().w(6).flex_none().text_color(t.accent).font_bold().child(marked ? "✓" : th.unread ? "•" : ""))
         .child(th.closed ? svg(ICON("box")).size(11).flex_none().text_color(t.dim) : glyph(t, th.status))
         .child(div().flex_1().min_w(0).truncate().text_color(th.closed ? t.muted : t.foreground).when(selected || th.unread || th.status === "blocked", (d) => d.font_bold()).child(th.title))
         .when(showButtons, (el) => el
@@ -704,7 +808,8 @@ export function threadRow(t, th, { selected = false, need = null, git = null, no
           .child(button(th.snoozed ? "wake" : "snooze", th.snoozed ? "sun" : "clock", "snooze"))
           .child(button("toggleSettle", th.settled ? "undo" : "box", "settle")))
         .when(!showButtons, (el) => el
-          .child(div().flex_none().text_color(t.dim).child(th.at ? age(now - th.at) : ""))
+          // How long it's been waiting on you, in the waiting color; else since its last change.
+          .child(div().flex_none().text_color(th.status === "blocked" && !th.closed ? t.blocked : t.dim).when(th.status === "blocked" && !th.closed, (d) => d.font_bold()).child(th.at ? age(now - th.at) : ""))
           .child(div().w(10).flex_none().text_color(t.accent).child(th.unread ? "●" : ""))),
     )
     .child(
@@ -764,10 +869,14 @@ export class Facts {
       seen.add(key);
       const g = (this.git[key] ??= {});
       g.ab = await aheadBehind(th.cwd, th.machine);
+      // A linked worktree (not the repo's own checkout): only those are offered a cleanup.
+      if (g.linked === undefined) g.linked = await isWorktree(th.cwd, th.machine);
       // A new branch in the same folder is a new question: don't reuse the last answer.
       if (g.branch !== th.branch) { g.pr = null; delete this.prAt[key]; }
       g.branch = th.branch;
-      if (!MAIN.test(th.branch) && (!this.prAt[key] || now - this.prAt[key] > 120000)) {
+      // Every 2 minutes; every 30 s while its checks are running.
+      const every = g.pr?.state === "OPEN" && g.pr?.checks === "pending" ? 30000 : 120000;
+      if (!MAIN.test(th.branch) && (!this.prAt[key] || now - this.prAt[key] > every)) {
         this.prAt[key] = now;
         g.pr = await pullRequest(th.cwd, th.machine);
         g.prBranch = th.branch;
@@ -777,10 +886,21 @@ export class Facts {
     const s = state();
     const merge = ts.filter((th) => {
       const g = this.git[this.key(th)];
-      return !th.closed && g?.pr?.state === "MERGED" && g.prBranch === th.branch
+      return !th.closed && g?.pr?.state === "MERGED" && g.prBranch === th.branch && g.linked
         && !s.merged[th.address] && !th.settled && !th.unread && th.status !== "working" && th.status !== "blocked";
     });
-    if (merge.length) patch((x) => { for (const th of merge) { x.merged[th.address] = true; x.settled[th.address] = now; } return x; });
+    if (merge.length) {
+      patch((x) => { for (const th of merge) { x.merged[th.address] = true; x.settled[th.address] = now; } return x; });
+      // Its worktree has done its job: offer to remove it and its branch (asks first).
+      for (const th of merge) {
+        const pr = this.git[this.key(th)]?.pr;
+        notify({
+          title: `PR #${pr?.number ?? ""} merged: "${th.title}" settled`,
+          body: `Click to clean up ${th.branch} (its worktree and branch; it asks first)`,
+          level: "success", action: { name: `sesh-bar.ask-cleanup:${th.address}` },
+        });
+      }
+    }
     cx.notify();
   }
   of(th) {
