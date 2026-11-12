@@ -107,7 +107,7 @@ export default class Bar extends View {
       const prev = L.state().history.find((x) => x !== here && live.has(x));
       if (prev) run("agent.focus", { terminal: prev });
     } else if (name === "pane-next" || name === "pane-prev") {
-      // kitty's next_window / previous_window: through the tab's panes in order.
+      // Next / previous pane: through the tab's panes in order.
       const f = focused();
       const list = panes().filter((p) => p.tab === f?.tab);
       if (list.length < 2) return;
