@@ -4,7 +4,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { run, theme, props, closeOverlay, hc, exec, focused, settings, spaces } from "herdr";
+import { run, theme, props, closeOverlay, hc, exec, focused, settings, spaces, nextCommand } from "herdr";
 import * as L from "./lib.js";
 
 const KEYS = [
@@ -47,6 +47,8 @@ export default class Agents extends View {
     this.offset = 0;
     this.previewRows = 30;
     this.scroll = ScrollHandle.new();
+    this.rowAt = {}; // address → { x, y, h }: where each row was last seen under the pointer
+    this.listAt = null;
     this.input = InputState.new({ placeholder: "filter by title, space or branch" });
     this.input.on("change", (_e, cx) => {
       if (this.replying) return;
@@ -73,6 +75,26 @@ export default class Agents extends View {
     this.facts.start(cx, () => this.model().all);
     cx.timer.every(1000, (cx) => this.refresh(cx));
     this.refresh(cx);
+    // The actions menu opens over the picker; when it goes, it sends "focus" so typing
+    // goes back to the filter box.
+    cx.spawn(async (cx) => {
+      for (;;) {
+        if ((await nextCommand()) === "focus") this.input.focus();
+        cx.notify();
+      }
+    });
+  }
+  // The actions menu for a thread, over the picker (which stays open behind it).
+  // `at`: where it opens, in window coordinates: a right click opens it at the click; a key
+  // opens it under the selected row (where the pointer last saw it), else over the list.
+  // ("pointer" won't do: inside a dialog Herdr places it at a stale spot.)
+  menu(th, cx, at = null) {
+    if (th && !th.shelf) { this.sel = th.address; this.offset = 0; this.refresh(cx); }
+    const pr = th && !th.shelf ? this.facts.of(th).git?.pr ?? null : null;
+    const row = th && this.rowAt[th.address];
+    at ??= row ? { x: row.x + 30, y: row.y + row.h } : this.listAt ?? "pointer";
+    L.openMenu(th && !th.shelf ? th : null, { from: "picker", pr, picker: props().overlay, at });
+    cx?.notify();
   }
 
   close() { closeOverlay(props().overlay); }
@@ -131,6 +153,7 @@ export default class Agents extends View {
   }
 
   move(items, d) {
+    this.rowAt = {}; // the list may scroll to show the new row: positions seen before are stale
     if (!items.length) return;
     const i = items.findIndex((it) => this.keyOf(it) === this.sel);
     this.sel = this.keyOf(items[(Math.max(0, i) + d + items.length) % items.length]);
@@ -164,7 +187,7 @@ export default class Agents extends View {
       // The screen counts back from its last line; the diff counts down from its first.
       this.offset = Math.max(0, Math.min(this.maxOffset(th), this.offset + (this.diff === down ? half : -half)));
     }
-    else if (a && (k === "space" || k === "m")) { const pr = th ? this.facts.of(th).git?.pr ?? null : null; this.close(); L.openMenu(th, { from: "picker", pr }); return; }
+    else if (a && (k === "space" || k === "m")) this.menu(th, cx);
     else if (a && k === "p" && th) L.togglePin(th);
     else if (a && k === "s" && th) L.toggleSettle(th);
     else if (a && k === "z" && th) L.snooze(th, Date.now() + 3600e3);
@@ -188,6 +211,12 @@ export default class Agents extends View {
       this.sel = here && items.includes(here) && !this.filter ? here.address : first ? this.keyOf(first) : null;
     }
     const now = Date.now();
+    // Over the top of the list (the dialog is 94% × 90% of the window, centered): where a
+    // key opens the menu when the pointer hasn't been over the selected row.
+    try {
+      const v = window.viewport_size();
+      this.listAt = { x: Math.round(v.width * 0.03 + 24 + 40), y: Math.round(v.height * 0.05 + 150) };
+    } catch { this.listAt = null; }
     const th = this.current();
 
     const list = [];
@@ -197,7 +226,8 @@ export default class Agents extends View {
       const f = this.facts.of(x);
       list.push(L.threadRow(t, x, {
         selected: x.address === this.sel, now, need: f.need, git: f.git, id: `ag-${x.address}`, wide: true,
-        onMenu: () => { this.close(); L.openMenu(x, { from: "picker", pr: f.git?.pr ?? null }); },
+        onMenu: (e, cx) => this.menu(x, cx, { x: e.position.x, y: e.position.y }),
+          onMove: (e) => { this.rowAt[x.address] = { x: e.position.x - e.local_position.x, y: e.position.y - e.local_position.y, h: e.bounds?.height ?? 46 }; },
         onClick: (ev, cx) => { if (ev.click_count > 1) { this.close(); L.go(x); } else { this.sel = x.address; this.offset = 0; this.refresh(cx); cx.notify(); } },
       }));
     };
@@ -222,7 +252,8 @@ export default class Agents extends View {
         if (x.address === this.sel) selShelf = shelves.length;
         const f = this.facts.of(x);
         shelves.push(L.threadRow(t, x, { selected: x.address === this.sel, now, need: f.need, git: f.git, id: `as-${x.address}`, wide: true,
-          onMenu: () => { this.close(); L.openMenu(x, { from: "picker", pr: f.git?.pr ?? null }); },
+          onMenu: (e, cx) => this.menu(x, cx, { x: e.position.x, y: e.position.y }),
+          onMove: (e) => { this.rowAt[x.address] = { x: e.position.x - e.local_position.x, y: e.position.y - e.local_position.y, h: e.bounds?.height ?? 46 }; },
           onClick: (ev, cx) => { if (ev.click_count > 1) { this.close(); L.go(x); } else { this.sel = x.address; this.offset = 0; this.refresh(cx); cx.notify(); } } }));
       }
     }
@@ -252,7 +283,7 @@ export default class Agents extends View {
       .text_color(t.foreground)
       .child(L.hatchTitle(t, "Agents", div().id("ag-new").cursor_pointer().text_color(t.accent).on_click(() => { this.close(); run("tab.new", { argv: ["claude"] }); }).child("+")))
       .child(h_flex().items_center().gap(10).text_color(t.muted)
-        .child(div().flex_1().child(`all spaces · ${m.all.length}`))
+        .child(div().flex_1().child(`all spaces · ${m.all.filter((x) => !x.closed).length}`))
         .when(m.counts.blocked > 0, (el) => el.child(badge("bell", t.blocked, m.counts.blocked)))
         .when(m.counts.working > 0, (el) => el.child(badge("working", t.working, m.counts.working)))
         .when(m.counts.done > 0, (el) => el.child(badge("check", t.done, m.counts.done))))
@@ -263,8 +294,8 @@ export default class Agents extends View {
         h_flex().flex_1().min_h(0).items_start()
           .child(
             v_flex().w("46%").h_full().min_h(0).pr(10).border_r(1).border_color(t.border)
-              .child(v_flex().id("ag-list").flex_1().min_h(0).overflow_y_scrollbar().track_scroll(this.scroll).children(list))
-              .child(v_flex().id("ag-shelves").flex_none().max_h("45%").overflow_y_scrollbar().track_scroll(this.shelfScroll).pt(6).border_t(1).border_color(t.border).children(shelves)),
+              .child(v_flex().id("ag-list").on_scroll_wheel(() => { this.rowAt = {}; }).flex_1().min_h(0).overflow_y_scrollbar().track_scroll(this.scroll).children(list))
+              .child(v_flex().id("ag-shelves").on_scroll_wheel(() => { this.rowAt = {}; }).flex_none().max_h("45%").overflow_y_scrollbar().track_scroll(this.shelfScroll).pt(6).border_t(1).border_color(t.border).children(shelves)),
           )
           .child(this.help ? this.keysView(t) : this.preview(t, th)),
       )

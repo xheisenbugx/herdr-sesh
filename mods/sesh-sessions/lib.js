@@ -1,6 +1,6 @@
 // Shared thread model for the herdr-sesh layout (the thread sidebar, pickers and menu).
 // The source of truth is mods/sesh-sidebar/lib.js; sesh-agents, sesh-sessions,
-// sesh-bar and sesh-menu carry copies (mods can't import across folders).
+// sesh-bar, sesh-menu and sesh-term-menu carry copies (mods can't import across folders).
 // Keep them equal: mods/sesh-sidebar/sync-lib.sh copies it.
 //
 // State lives in shared("sesh") so every view agrees on sections and order:
@@ -498,9 +498,11 @@ export function runAction(name, t) {
   if (name === "undo") return undo();
   if (name === "closeThreadNow") return closeThread(t, { confirmed: true });
   if (name.startsWith("view:")) {
-    // The sidebar only hears its commands while it's shown.
-    if (findNode(layout(), "sidebar")?.hidden && name !== "view:hide") run("layout.show", { id: "sidebar" });
-    return run(`sesh-sidebar.${name.slice(5)}`);
+    // The sidebar only hears its commands while it's shown: when it's hidden, show it and
+    // let sesh-bar (always shown) pass the command on a moment later.
+    if (name === "view:hide" || !findNode(layout(), "sidebar")?.hidden) return run(`sesh-sidebar.${name.slice(5)}`);
+    run("layout.show", { id: "sidebar" });
+    return run(`sesh-bar.view:${name.slice(5)}`);
   }
   const f = plain[name];
   if (f) return f(t);
@@ -511,15 +513,21 @@ function findNode(node, id) {
   return null;
 }
 // Opens the actions menu for a thread (or the sidebar's own, with none).
-export function openMenu(t, { at = "pointer", from = "sidebar", pr = null, view = "main" } = {}) {
+// `picker`: the agent picker's overlay id, when the menu opens over it (it stays open
+// for actions that keep you there, and closes for ones that take you elsewhere).
+export function openMenu(t, { at = "pointer", from = "sidebar", pr = null, view = "main", picker = null } = {}) {
   openOverlay({
-    mod: "sesh-menu", kind: "popup", at, width: 260, height: menuHeight(t, { pr, view }),
-    props: { address: t?.address ?? null, from, pr, view },
+    mod: "sesh-menu", kind: "popup", at, width: 260, height: menuHeight(t, { pr, view, from }),
+    props: { address: t?.address ?? null, from, pr, view, picker },
   });
 }
+// The menu items that take you away from the agent picker (it closes for them).
+export const LEAVES_PICKER = new Set(["go", "review", "rename", "newThread", "newWorktreeThread", "archive", "view:help", "view:group", "view:only"]);
+// The sidebar's own items the picker's menu leaves out (they're about the sidebar's look).
+export const viewMenuFor = (from, opts) => viewMenu(opts).filter((x) => from !== "picker" || !/^view:(filter|narrow|wide|hide)$/.test(x[3] ?? ""));
 // The popup's height for its items (sesh-menu draws rows 26 px, lines 9 px, a 36 px head).
-export function menuHeight(t, { pr = null, view = "main" } = {}) {
-  const items = view === "snooze" ? new Array(6).fill(["x"]) : t ? threadMenu(t, { pr, pinnedCount: threads().pinned.length }) : viewMenu();
+export function menuHeight(t, { pr = null, view = "main", from = "sidebar" } = {}) {
+  const items = view === "snooze" ? new Array(6).fill(["x"]) : t ? threadMenu(t, { pr, pinnedCount: threads().pinned.length }) : viewMenuFor(from);
   return 36 + 8 + items.reduce((h, x) => h + (x[0] === "sep" ? 9 : 26), 0) + 2;
 }
 
@@ -641,8 +649,9 @@ export function sectionHead(t, icon, label, count) {
 //   •🔔 Fix the login redirect              2m ●
 //       api · Allow Bash: npm test   fix/login ↑2  #42
 // `hovered` shows the pin, snooze and settle buttons; `onAct(name, cx)` runs one,
-// `onMenu(event, cx)` opens the menu on a right click, `onPR` opens its PR.
-export function threadRow(t, th, { selected = false, need = null, git = null, now = Date.now(), id, onClick, wide = false, hovered = false, onHover, onAct, onMenu } = {}) {
+// `onMenu(event, cx)` opens the menu on a right click, `onPR` opens its PR;
+// `onMove(event, cx)` hears the pointer moving over the row (where the row is on screen).
+export function threadRow(t, th, { selected = false, need = null, git = null, now = Date.now(), id, onClick, wide = false, hovered = false, onHover, onAct, onMenu, onMove } = {}) {
   const detail = (() => {
     if (th.closed) return [t.dim, "closed · ↵ resumes"];
     if (th.snoozed) return [t.muted, `snoozed until ${fmtTime(th.snoozed)}`];
@@ -682,6 +691,7 @@ export function threadRow(t, th, { selected = false, need = null, git = null, no
     .when(selected, (el) => el.bg(t.selected).border_l(3).border_color(t.accent))
     .hover((s) => (selected ? s : s.bg(t.hover)))
     .when(!!onHover, (el) => el.on_hover((h, cx) => onHover(h, cx)))
+    .when(!!onMove, (el) => el.on_mouse_move((e, cx) => onMove(e, cx)))
     .when(!!onClick, (el) => el.on_click(onClick))
     .when(!!onMenu, (el) => el.on_mouse_down("right", (e, cx) => { cx.stop_propagation(); onMenu(e, cx); }))
     .child(
