@@ -7,7 +7,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { theme, props, closeOverlay, shared } from "herdr";
+import { theme, props, closeOverlay, shared, run } from "herdr";
 import * as L from "./lib.js";
 
 export default class Menu extends View {
@@ -25,7 +25,17 @@ export default class Menu extends View {
     cx.timer.after(60, () => { if (this.view === "main") this.handle.focus(); });
   }
 
-  close() { closeOverlay(props()?.overlay); }
+  // Closes the menu. Over the agent picker, `leave` closes the picker too (the action
+  // takes you elsewhere); otherwise the picker stays, and gets the keyboard back in close().
+  dismiss(leave = false) {
+    const picker = props()?.picker;
+    if (picker && leave) { this.left = true; closeOverlay(picker); }
+    closeOverlay(props()?.overlay);
+  }
+  // Herdr calls this when the menu goes, however it went (an item, Esc, a click outside).
+  close() {
+    if (props()?.picker && !this.left) run("sesh-agents.focus");
+  }
   thread() {
     const a = props()?.address;
     return a ? L.threads().all.find((t) => t.address === a) ?? null : null;
@@ -34,7 +44,7 @@ export default class Menu extends View {
 
   items() {
     const th = this.thread();
-    if (this.view === "more" || !th) return L.viewMenu(this.opts()).filter((x) => props()?.from !== "picker" || !/^view:(filter|narrow|wide|hide)$/.test(x[3] ?? ""));
+    if (this.view === "more" || !th) return L.viewMenuFor(props()?.from, this.opts());
     if (this.view === "snooze") {
       return [
         ...L.snoozeOptions().map((o, n) => ["clock", o.label, String(n + 1), `until:${o.until}`, false, L.fmtTime(o.until)]),
@@ -57,8 +67,9 @@ export default class Menu extends View {
       this.inputs[this.view].focus();
       return cx.notify();
     }
-    if (action.startsWith("until:")) { L.snooze(th, Number(action.slice(6))); return this.close(); }
-    this.close();
+    if (action.startsWith("until:")) { L.snooze(th, Number(action.slice(6))); return this.dismiss(); }
+    // Going to a thread (or resuming a closed one), reviewing, renaming…: out of the picker too.
+    this.dismiss(L.LEAVES_PICKER.has(action));
     if (action === "approve" || action === "deny" || action === "markSeen") cx.spawn(async () => L.runAction(action, th));
     else L.runAction(action, th);
   }
@@ -67,7 +78,7 @@ export default class Menu extends View {
     const th = this.thread();
     const text = this.inputs[this.view]?.value() ?? "";
     if (this.view === "reply") {
-      this.close();
+      this.dismiss();
       if (th) cx.spawn(async () => L.reply(th, text));
       return;
     }
@@ -75,7 +86,7 @@ export default class Menu extends View {
       const until = L.parseWhen(text);
       if (!until) { this.error = "try 90m, 3h, 15:04, evening, tomorrow or next-week"; return cx.notify(); }
       L.snooze(th, until);
-      this.close();
+      this.dismiss();
     }
   }
 
@@ -91,7 +102,7 @@ export default class Menu extends View {
     const real = items.map((x, i) => (x[0] === "sep" ? -1 : i)).filter((i) => i >= 0);
     const at = Math.max(0, real.indexOf(this.idx));
     if (k === "escape") {
-      if (this.view === "main" || !this.thread() || props()?.view === this.view) this.close();
+      if (this.view === "main" || !this.thread() || props()?.view === this.view) this.dismiss();
       else { this.view = "main"; this.idx = 0; }
     }
     else if (k === "down" || ch === "j") this.idx = real[(at + 1) % real.length];

@@ -195,7 +195,8 @@ export default class Sessions extends View {
     if (!r) return;
     if (r.kind === "space") run("space.close", { id: r.space.id });
     else if (r.kind === "zoxide") cx.spawn(async (cx) => {
-      await exec("zoxide", ["remove", r.path]);
+      const res = await exec("zoxide", ["remove", r.path]).catch(() => null);
+      if (res?.code !== 0) return;
       this.zoxide = this.zoxide.filter((z) => z !== r.path);
       cx.notify();
     });

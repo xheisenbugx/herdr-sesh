@@ -102,7 +102,7 @@ The ANSI colours are Catppuccin-like. `ui_font` is JetBrains Mono.
 - n new claude tab, N new worktree (the `worktree` dialog), R rename the tab, X close the pane, A archive (the worktree remove dialog);
 - space / m / right-click the menu, / filter, o group by space, f only this space, < > resize, q hide, ? keys.
 
-**Agent picker keys:** ctrl-y / x / o / s / g / d / u, alt-p / s / z / e / b / w / d / space, f1, Esc. A single click selects a thread; a double click goes to it.
+**Agent picker keys:** ctrl-y / x / o / s / g / d / u, alt-p / s / z / e / b / w / d / space, f1, Esc. A single click selects a thread; a double click goes to it. A right click (or alt-m) opens the actions menu over the picker at the click, or under the selected row (`at: {x, y}` from the row's mouse events: `at: "pointer"` lands at a stale spot inside a dialog); the picker stays open unless the action leaves it, and the menu sends `sesh-agents.focus` when it closes so typing goes back to the filter.
 
 **Session picker keys:** ctrl-a / t / g / s / z / r pick the source, ctrl-x closes the space or runs `zoxide remove`, ctrl-o toggles the preview. Enter goes to an existing space, or runs `space.new {folder, argv: ["sh","-c",startup_command]}`.
 

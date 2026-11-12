@@ -107,12 +107,13 @@ export default class Bar extends View {
       const prev = L.state().history.find((x) => x !== here && live.has(x));
       if (prev) run("agent.focus", { terminal: prev });
     } else if (name === "pane-next" || name === "pane-prev") {
-      // kitty's next_window / previous_window: through the tab's panes in order.
+      // Next / previous pane: through the tab's panes in order.
       const f = focused();
       const list = panes().filter((p) => p.tab === f?.tab);
       if (list.length < 2) return;
       const i = list.findIndex((p) => p.pane === f?.pane);
-      const j = (Math.max(0, i) + (name === "pane-next" ? 1 : -1) + list.length) % list.length;
+      // Not on one of them (a sidebar has the keyboard): start at the first, or the last.
+      const j = i < 0 ? (name === "pane-next" ? 0 : list.length - 1) : (i + (name === "pane-next" ? 1 : -1) + list.length) % list.length;
       run("pane.focus", { pane: list[j].pane });
     } else if (name === "need-next" || name === "need-prev") {
       const list = this.needing();
@@ -128,11 +129,14 @@ export default class Bar extends View {
       const order = L.listOrder(L.threads());
       if (!order.length) return;
       const cur = order.findIndex((t) => t.address === th?.address);
-      const i = cur < 0 ? 0 : (cur + (name === "thread-next" ? 1 : -1) + order.length) % order.length;
+      const i = cur < 0 ? (name === "thread-next" ? 0 : order.length - 1) : (cur + (name === "thread-next" ? 1 : -1) + order.length) % order.length;
       L.go(order[i]);
     } else if (name === "thread") {
       const t = L.listOrder(L.threads())[Number(arg) - 1];
       if (t) L.go(t);
+    } else if (name === "view" && arg) {
+      // A sidebar command from the actions menu, sent once the just-shown sidebar is listening.
+      cx?.timer.after(150, () => run(`sesh-sidebar.${arg}`));
     } else if (name === "sidebar") {
       // A hidden sidebar hears commands only once it's shown: give it a moment.
       if (find(layout(), "sidebar")?.hidden) { run("layout.show", { id: "sidebar" }); cx?.timer.after(150, () => run("sesh-sidebar.enter")); }

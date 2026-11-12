@@ -61,6 +61,7 @@ export default class Sidebar extends View {
     this.filter = "";
     this.back = null;
     this.hover = null;
+    this.rowAt = {}; // address → { x, y, h }: where each row was last seen under the pointer
     this.filterInput = InputState.new({ placeholder: "filter by title, space or branch" });
     this.filterInput.on("change", (_e, cx) => { this.filter = this.filterInput.value(); cx.notify(); });
     this.filterInput.on("submit", (_e, cx) => { this.mode = null; this.handle.focus(); cx.notify(); });
@@ -157,7 +158,11 @@ export default class Sidebar extends View {
     if (this.mode === "filter") this.mode = null;
     L.go(it);
   }
-  menu(th, at = "pointer") {
+  // `at`: a right click opens the menu at the click; a key opens it under the selected row
+  // when the pointer has seen where that row is, else at the pointer.
+  menu(th, at = null) {
+    const row = th && this.rowAt[th.address];
+    at ??= row ? { x: row.x + 30, y: row.y + row.h } : "pointer";
     L.openMenu(th, { at, from: "sidebar", pr: th ? this.facts.of(th).git?.pr ?? null : null });
   }
   act(name, th, cx) {
@@ -192,7 +197,8 @@ export default class Sidebar extends View {
     if (mod.platform || mod.control || mod.alt) return;
     if (this.mode === "help") { this.mode = null; cx.stop_propagation(); cx.notify(); return; }
 
-    const move = (j) => { if (items.length) this.sel = this.keyOf(items[(j + items.length) % items.length]); };
+    // The list may scroll to show the new row: row positions seen before are stale.
+    const move = (j) => { if (items.length) { this.sel = this.keyOf(items[(j + items.length) % items.length]); this.rowAt = {}; } };
     if (k === "escape") { if (this.filter) { this.filter = ""; this.filterInput.set_value(""); } else this.leave(); }
     else if (k === "down" || ch === "j") move(i + 1);
     else if (k === "up" || ch === "k") move(i - 1);
@@ -219,7 +225,7 @@ export default class Sidebar extends View {
     else if (ch === "K" && live?.pinned) L.movePin(live, -1);
     else if (ch === "J" && live?.pinned) L.movePin(live, 1);
     else if (ch === "s" && live) L.toggleSettle(live);
-    else if (ch === "z" && live) L.openMenu(live, { from: "sidebar", view: "snooze" });
+    else if (ch === "z" && live) { const row = this.rowAt[live.address]; L.openMenu(live, { from: "sidebar", view: "snooze", at: row ? { x: row.x + 30, y: row.y + row.h } : "pointer" }); }
     else if (ch === "w" && live) L.wake(live);
     else if (ch === "e" && live) cx.spawn(async () => L.markSeen(live));
     else if (ch === "u") L.undo();
@@ -259,7 +265,8 @@ export default class Sidebar extends View {
       onHover: (h, cx) => { const v = h ? th.address : this.hover === th.address ? null : this.hover; if (v !== this.hover) { this.hover = v; cx.notify(); } },
       onClick: (_e, cx) => { this.activate(th, cx); cx.notify(); },
       onAct: (name, cx) => this.act(name, th, cx),
-      onMenu: (_e, cx) => { this.sel = th.address; this.menu(th); cx.notify(); },
+      onMenu: (e, cx) => { this.sel = th.address; this.menu(th, { x: e.position.x, y: e.position.y }); cx.notify(); },
+      onMove: (e) => { this.rowAt[th.address] = { x: e.position.x - e.local_position.x, y: e.position.y - e.local_position.y, h: e.bounds?.height ?? 46 }; },
     });
     const row = (th) => {
       if (th.address === this.sel) selChild = kids.length;
@@ -348,13 +355,13 @@ export default class Sidebar extends View {
       .when(this.mode === "help", (el) => el.child(this.help(t)))
       .when(this.mode !== "help", (el) => el
         .child(
-          v_flex().id("th-list").flex_1().min_h(0).overflow_y_scrollbar().track_scroll(this.scroll).px(2)
+          v_flex().id("th-list").on_scroll_wheel(() => { this.rowAt = {}; }).flex_1().min_h(0).overflow_y_scrollbar().track_scroll(this.scroll).px(2)
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .on_mouse_down("right", (_e, cx) => { this.menu(null); cx.stop_propagation(); })
             .children(kids),
         )
         .child(
-          v_flex().id("th-shelves").flex_none().max_h(340).overflow_y_scrollbar().track_scroll(this.shelfScroll).mx(12).pt(6).border_t(1).border_color(t.border)
+          v_flex().id("th-shelves").on_scroll_wheel(() => { this.rowAt = {}; }).flex_none().max_h(340).overflow_y_scrollbar().track_scroll(this.shelfScroll).mx(12).pt(6).border_t(1).border_color(t.border)
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .children(shelfKids),
         ))

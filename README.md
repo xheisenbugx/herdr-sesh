@@ -164,6 +164,8 @@ The actions menu lists everything you can do to a thread, each item with its sid
 - press `alt-space` in the agent picker;
 - right-click an agent's terminal and choose **Thread actions…**.
 
+In the agent picker the menu opens over the picker, at the row. The picker stays open for actions that keep you there (pin, settle, snooze, approve, reply…), and closes for ones that take you elsewhere (go, review, rename, new thread).
+
 ### The attention strip and notifications
 
 - **The attention strip** sits at the right end of the tab bar. It names the *other* spaces where an agent is waiting on you or has finished. Click one to go there.
