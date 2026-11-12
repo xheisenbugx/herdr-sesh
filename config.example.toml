@@ -18,3 +18,11 @@
 # [[session]]
 # name = "notes"
 # path = "~/notes"
+
+# How threads tidy themselves (durations: a number and m, h, d or w).
+# [threads]
+# settle_after = "7d"          # an idle thread moves to Settled after this
+# forget_closed_after = "14d"  # a closed thread is forgotten after this
+
+# [notifications]
+# quiet_hours = "22:00-08:00"  # no macOS notifications in these hours
