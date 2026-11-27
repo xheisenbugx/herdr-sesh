@@ -104,7 +104,7 @@ The ANSI colours are Catppuccin-like. `ui_font` is JetBrains Mono.
 
 **Agent picker keys:** ctrl-y / x / o / s / g / d / u, alt-p / s / z / e / b / w / d / space, f1, Esc. A single click selects a thread; a double click goes to it. A right click (or alt-m) opens the actions menu over the picker at the click, or under the selected row (`at: {x, y}` from the row's mouse events: `at: "pointer"` lands at a stale spot inside a dialog); the picker stays open unless the action leaves it, and the menu sends `sesh-agents.focus` when it closes so typing goes back to the filter.
 
-**Session picker keys:** ctrl-a / t / g / s / z / r pick the source, ctrl-x closes the space or runs `zoxide remove`, ctrl-o toggles the preview. Enter goes to an existing space, or runs `space.new {folder, argv: ["sh","-c",startup_command]}`.
+**Session picker keys:** ctrl-a / t / g / z / r pick the source, ctrl-x closes the space (a second press within 3 s, then `space.close {confirmed: true}`, so Herdr's confirm dialog never takes the keyboard; the filter box is refocused after) or runs `zoxide remove`, ctrl-o toggles the preview. The filter Input binds ctrl-a itself (start of line), so the picker binds ctrl-a under `SeshSessions > Input` to its own action. Enter goes to an existing space, or runs `space.new {folder, argv: ["sh","-c",startup_command]}`.
 
 **Global keys** (`layout:herdr-sesh`) go to `sesh-bar.<command>`, so they work while the sidebar is hidden:
 
@@ -118,7 +118,7 @@ The ANSI colours are Catppuccin-like. `ui_font` is JetBrains Mono.
 
 `sesh-bar` also polls every second. It stamps status changes, expires snoozes, records the previous space, captures Claude Code session ids, and copies `.worktreeinclude` files into fresh worktrees. Every 10 s it reads `~/.config/herdr-sesh/config.toml` into `shared("sesh.config")` (`parseConfig`: every `[table]`'s plain keys). Its attention chips add the longest wait in that space (`api 12m`), longest first, redrawn every 30 s.
 
-The toast mod also runs `osascript` to post a macOS notification while Herdr isn't active, except inside `[notifications] quiet_hours` ("22:00-08:00", may cross midnight).
+The toast mod also posts a macOS notification while Herdr isn't active, for agent events only (an action of `agent.focus`, `pane.focus`, `terminal.show`, `terminal.peek` or `sesh-bar.ask-cleanup:*`, or a title with "needs you", "finished", "failed"…), except inside `[notifications] quiet_hours` ("22:00-08:00", may cross midnight). It sends with `~/Applications/Herdr Notifier.app` (terminal-notifier re-bundled with Herdr's icon by `scripts/notifier.sh`), else `terminal-notifier`, else `osascript`; `-group` keeps one per action, `-activate dev.herdr.app` and `-execute 'herdr-app do <action> <args>'` make the click go to the agent. It logs the last 40 toasts to `data/sesh-toast/recent.jsonl`.
 
 **Agent picker extras:** `ctrl-t` or shift-click marks threads; `ctrl-y` / `ctrl-x` / `ctrl-s` and `alt-p` / `s` / `z` / `e` then act on every marked one (`L.together()` makes them one undo step; pin and settle go one way for all). `alt-w` with marks asks for a second press within 3 s. Esc clears marks before it closes. A filter of 3+ letters also matches each agent's screen (`hc read --lines 200`, every 4 s while the filter is that long). A ctrl-g switch bumps a generation number so an older read can't free the newer one's turn.
 
@@ -135,7 +135,7 @@ The toast mod also runs `osascript` to post a macOS notification while Herdr isn
 - **Herdr functions and commands it uses:**
   - functions: `agents`, `panes`, `spaces`, `terminals`, `focused`, `shared` / `setShared`, `setAgentOrder`, `openOverlay`, `nextCommand`, `exec`, `hc`, `readTextFile`, `notify`;
   - commands: `agent.focus`, `terminal.pin`, `terminal.open`, `tab.new`, `tab.rename`, `space.new`, `space.select`, `space.close`, `pane.close`, `pane.focus`, `layout.toggle`, `layout.show`, `layout.hide`, `layout.resize`.
-- **Programs it runs:** `hc`, `git`, `gh`, `zoxide`, `ls`, `sh`, `osascript`.
+- **Programs it runs:** `hc`, `git`, `gh`, `zoxide`, `ls`, `sh`, `terminal-notifier` or `osascript`.
 - **Art:** 1-colour SVG icons in `mods/sesh-sidebar/` (lucide-style, `currentColor`).
 
 ## Watch out
@@ -146,7 +146,7 @@ The toast mod also runs `osascript` to post a macOS notification while Herdr isn
 - Only one `sesh-bar` copy may exist in the layout. Every copy would receive the global key commands and act twice.
 - "What it needs" is parsed from Claude Code's permission box on screen (the "Do you want…" line and the box above it). Other agents fall back to "needs you".
 - The keys take over `cmd-a`, `cmd-h`, `cmd-z` and `cmd-shift-p` in this layout. The palette moves to `cmd-alt-p`.
-- macOS-first: the keys use cmd, and notifications use `osascript`. Elsewhere the toast still works.
+- macOS-first: the keys use cmd, and notifications use terminal-notifier (or `osascript`). Elsewhere the toast still works.
 
 ## Done when
 

@@ -142,6 +142,7 @@ if [ "$uninstall" = 1 ]; then
   out=$(keys remove) || exit 1
   [ "$out" = updated ] && say "removed its keys from keys.json (your old one is kept as keys.json.bak-$STAMP)"
   [ -f "$CONFIG" ] && say "kept your settings in $CONFIG (delete it yourself if you want)"
+  if [ -d "$HOME/Applications/Herdr Notifier.app" ]; then rm -rf "$HOME/Applications/Herdr Notifier.app"; say "removed ~/Applications/Herdr Notifier.app"; fi
   say "herdr-sesh is gone."
   exit 0
 fi
@@ -205,6 +206,13 @@ if [ ! -f "$CONFIG" ]; then
   mkdir -p "$(dirname "$CONFIG")"
   cp "$src/config.example.toml" "$CONFIG"
   say "wrote $CONFIG (all commented out: add your sessions there)"
+fi
+
+# Notifications that show as Herdr's, when terminal-notifier is there to copy.
+if [ "$(uname)" = Darwin ] && command -v terminal-notifier >/dev/null 2>&1; then
+  sh "$src/scripts/notifier.sh" --quiet || say "couldn't make Herdr Notifier.app: notifications use terminal-notifier as is"
+elif [ "$(uname)" = Darwin ]; then
+  say "tip: brew install terminal-notifier, then run this again, for notifications that take you to the agent"
 fi
 
 if command -v herdr-app >/dev/null 2>&1; then

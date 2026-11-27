@@ -5,8 +5,17 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { run, theme, props, closeOverlay, hc, exec, home, readTextFile, spaces, panes, agents, settings, machines } from "herdr";
+import { run, theme, props, closeOverlay, hc, exec, home, readTextFile, spaces, panes, agents, settings, machines, nextCommand } from "herdr";
 import * as L from "./lib.js";
+
+// The filter box is an Input, and Input binds ctrl-a (start of line, as on macOS) and
+// ctrl-e itself: a binding beats on_key_down, so ctrl-a never reached key(). This
+// binding, scoped to an Input inside this picker, wins over Input's own (it's deeper or
+// as deep, and later), and turns ctrl-a into an action the picker's root handles.
+const ALL = "sesh-sessions-all";
+let bound = false;
+// How long a first ctrl-x on a space waits for the second.
+const ARM_MS = 3000;
 
 const SOURCES = [
   { key: "all", label: "all", icon: null, ctrl: "a" },
@@ -66,10 +75,21 @@ export default class Sessions extends View {
     this.remote = null; // [{ machine, path }] once asked (ctrl-r)
     this.scroll = ScrollHandle.new();
     this.input = InputState.new({ placeholder: "Filter sessions..." });
-    this.input.on("change", (_e, cx) => { this.filter = this.input.value(); this.selKey = null; this.refresh(cx); cx.notify(); });
+    this.input.on("change", (_e, cx) => { this.filter = this.input.value(); this.selKey = null; this.armed = null; this.refresh(cx); cx.notify(); });
     this.input.on("submit", (_e) => this.connect(this.selected()));
+    this.armed = null; // { key, at }: a space a first ctrl-x asked to close
+    if (!bound) {
+      try { cx.bind_keys([{ keystroke: "ctrl-a", action: ALL, context: "SeshSessions > Input" }]); bound = true; } catch {}
+    }
     this.input.focus();
     cx.timer.after(300, () => this.input.focus());
+    // "sesh-sessions.focus" (a popup over the picker going) gives the filter box the keyboard back.
+    cx.spawn(async (cx) => {
+      for (;;) {
+        if ((await nextCommand()) === "focus") this.input.focus();
+        cx.notify();
+      }
+    });
     cx.spawn(async (cx) => {
       const h = home();
       const text = await readTextFile(`${h}/${CONFIG}`).catch(() => null);
@@ -127,9 +147,13 @@ export default class Sessions extends View {
       if (r.kind === "space") {
         const tab = r.space.tabs.find((x) => x.active) ?? r.space.tabs[0];
         const p = panes().find((x) => x.tab === tab?.id && x.focused) ?? panes().find((x) => x.tab === tab?.id && x.terminal);
+        // A failed read (the space just closed, say) must still free the row's turn,
+        // or its preview never loads again.
         if (p?.terminal) {
-          const res = await hc(["read", p.terminal]);
-          if (res.code === 0) lines = L.screenLines(res.stdout);
+          try {
+            const res = await hc(["read", p.terminal]);
+            if (res.code === 0) lines = L.screenLines(res.stdout);
+          } catch {}
         }
       } else if (r.kind === "remote") {
         try {
@@ -157,16 +181,7 @@ export default class Sessions extends View {
       if (there) return run("space.select", { id: there.id });
       return run("space.new", { folder: r.path, machine: r.machine });
     }
-    // These are all on this computer: only its spaces count, and new ones start here
-    // (machine "", not the focused space's machine).
-    const local = spaces().filter((p) => !p.machine);
-    // A config session is its space by name first.
-    if (r.kind === "config") {
-      const named = local.find((p) => p.named && p.name === r.name);
-      if (named) return run("space.select", { id: named.id });
-    }
-    // Otherwise a space already there (by its folder, or a terminal in it) is reused.
-    const there = local.find((p) => trim(p.folder) === r.path) ?? local.find((p) => panes().some((x) => trim(x.cwd) === r.path && p.tabs.some((tb) => tb.id === x.tab)));
+    const there = this.openSpace(r);
     if (there) return run("space.select", { id: there.id });
     const cmd = r.startup ?? this.config.startup;
     const name = r.kind === "config" ? r.name : undefined;
@@ -191,15 +206,69 @@ export default class Sessions extends View {
     });
   }
 
-  kill(r, cx) {
+  // The space a row stands for, when one is open: a space row's own; a config session's
+  // space by name, else any space already in its folder (by the space's folder, or a
+  // terminal in it); a machine's directory's space there.
+  openSpace(r) {
+    if (r.kind === "space") return r.space;
+    if (r.kind === "remote") return spaces().find((p) => p.machine === r.machine && p.folder === r.path) ?? null;
+    // These are all on this computer: only its spaces count.
+    const local = spaces().filter((p) => !p.machine);
+    if (r.kind === "config") {
+      const named = local.find((p) => p.named && p.name === r.name);
+      if (named) return named;
+    }
+    return local.find((p) => trim(p.folder) === r.path) ?? local.find((p) => panes().some((x) => trim(x.cwd) === r.path && p.tabs.some((tb) => tb.id === x.tab))) ?? null;
+  }
+
+  // Gives the filter box the keyboard back, now and once Herdr has settled: closing a
+  // space (above all the one on screen) moves Herdr's focus to another space's terminal,
+  // which took the keyboard away from the picker.
+  refocus(cx) {
+    this.input.focus();
+    for (const ms of [120, 400]) cx.timer.after(ms, () => this.input.focus());
+  }
+
+  // ctrl-x: a zoxide directory is forgotten at once; a space (a space row, or the space a
+  // config session or a machine's directory has open) closes on a second ctrl-x within
+  // ARM_MS. The picker asks itself rather than letting Herdr open its confirm dialog over
+  // it, which kept the keyboard when it went, so nothing in the picker answered keys.
+  // `next`: the row to select once this one's gone.
+  kill(r, next, cx) {
     if (!r) return;
-    if (r.kind === "space") run("space.close", { id: r.space.id });
-    else if (r.kind === "zoxide") cx.spawn(async (cx) => {
-      const res = await exec("zoxide", ["remove", r.path]).catch(() => null);
-      if (res?.code !== 0) return;
-      this.zoxide = this.zoxide.filter((z) => z !== r.path);
-      cx.notify();
-    });
+    if (r.kind === "zoxide") {
+      cx.spawn(async (cx) => {
+        const res = await exec("zoxide", ["remove", r.path]).catch(() => null);
+        if (res?.code !== 0) return;
+        this.zoxide = this.zoxide.filter((z) => z !== r.path);
+        if (this.selKey === r.key || this.selKey === null) this.selKey = next?.key ?? null;
+        this.refresh(cx);
+        cx.notify();
+      });
+      return;
+    }
+    const sp = this.openSpace(r);
+    if (!sp) return;
+    const now = Date.now();
+    if (this.armed?.key !== r.key || now - this.armed.at > ARM_MS) {
+      const armed = (this.armed = { key: r.key, at: now, name: sp.name });
+      cx.timer.after(ARM_MS + 50, (cx) => { if (this.armed === armed) { this.armed = null; cx.notify(); } });
+      return;
+    }
+    this.armed = null;
+    // A space row goes with its space: select its neighbour, not the top of the list.
+    if (r.kind === "space") this.selKey = next?.key ?? null;
+    run("space.close", { id: sp.id, confirmed: true });
+    this.refocus(cx);
+  }
+
+  setSource(key, cx) {
+    this.source = key;
+    this.selKey = null;
+    this.armed = null;
+    if (key === "remote") this.loadRemote(cx);
+    this.refresh(cx);
+    cx.notify();
   }
 
   key(e, cx) {
@@ -209,11 +278,13 @@ export default class Sessions extends View {
     const src = SOURCES.find((s) => c && s.ctrl === k);
     const i = Math.max(0, rows.findIndex((r) => r.key === this.selected(rows)?.key));
     const pick = (j) => { if (rows.length) this.selKey = rows[Math.max(0, Math.min(rows.length - 1, j))].key; };
+    // Any other key disarms a first ctrl-x.
+    if (!(c && k === "x")) this.armed = null;
     if (k === "escape") return this.close();
     if (k === "down" || (c && (k === "n" || k === "j"))) pick(i + 1);
     else if (k === "up" || (c && (k === "p" || k === "k"))) pick(i - 1);
-    else if (src) { this.source = src.key; this.selKey = null; if (src.key === "remote") this.loadRemote(cx); }
-    else if (c && k === "x") this.kill(this.selected(rows), cx);
+    else if (src) { cx.stop_propagation(); return this.setSource(src.key, cx); }
+    else if (c && k === "x") this.kill(rows[i] ?? null, rows[i + 1] ?? rows[i - 1] ?? null, cx);
     else if (c && k === "o") this.showPreview = !this.showPreview;
     else return;
     this.refresh(cx);
@@ -250,13 +321,15 @@ export default class Sessions extends View {
       const on = this.source === s.key;
       sources.child(h_flex().id(`src-${s.key}`).gap(4).items_center().cursor_pointer()
         .text_color(on ? t.accent : t.muted).when(on, (el) => el.font_bold())
-        .on_click((_e, cx) => { this.source = s.key; this.selKey = null; if (s.key === "remote") this.loadRemote(cx); this.refresh(cx); cx.notify(); })
+        .on_click((_e, cx) => { this.setSource(s.key, cx); this.input.focus(); })
         .when(!!s.icon, (el) => el.child(svg(L.ICON(s.icon)).size(11).text_color(on ? t.accent : t.muted)))
         .child(s.label));
     });
 
     return v_flex()
       .id("sesh-sessions")
+      .key_context("SeshSessions")
+      .on_action(ALL, (_e, cx) => this.setSource("all", cx))
       .on_key_down((e, cx) => this.key(e, cx))
       .size_full()
       .bg(t.background)
@@ -282,7 +355,7 @@ export default class Sessions extends View {
                 return h_flex().id(`ss-${r.key}`).w_full().gap(8).items_center().pl(on ? 7 : 10).pr(8).py(1).cursor_pointer()
                   .when(on, (el) => el.bg(t.selected).border_l(3).border_color(t.accent))
                   .hover((s) => (on ? s : s.bg(t.hover)))
-                  .on_click((ev, cx) => { if (ev.click_count > 1 || on) this.connect(r); else { this.selKey = r.key; this.refresh(cx); cx.notify(); } })
+                  .on_click((ev, cx) => { if (ev.click_count > 1 || on) return this.connect(r); this.selKey = r.key; this.armed = null; this.input.focus(); this.refresh(cx); cx.notify(); })
                   .child(this.icon(t, r))
                   .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).when(r.kind === "space" && r.space.active, (d) => d.font_bold()).child(r.name))
                   .when(r.status === "blocked", (el) => el.child(div().text_color(t.blocked).text_size(11).child("needs you")));
@@ -300,6 +373,10 @@ export default class Sessions extends View {
       )
       .child(h_flex().flex_none().h(40).gap(8).items_center().border_t(1).border_color(t.border).mt(6)
         .child(hint("↵", "connect")).child(dot()).child(hint("^o", this.showPreview ? "hide preview" : "show preview")).child(dot())
-        .child(hint("^a ^t ^g ^z ^r", "source")).child(dot()).child(hint("^x", "kill")).child(dot()).child(hint("esc", "quit")));
+        .child(hint("^a ^t ^g ^z ^r", "source")).child(dot())
+        .child(this.armed
+          ? h_flex().gap(4).child(div().font_bold().text_color(t.blocked).child("^x")).child(div().text_color(t.blocked).child(`again to close ${this.armed.name}`))
+          : hint("^x", "kill"))
+        .child(dot()).child(hint("esc", "quit")));
   }
 }
