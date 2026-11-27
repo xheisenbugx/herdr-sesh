@@ -68,6 +68,7 @@ Your own layout is not touched. **`cmd-shift-l`** cycles through your layouts, a
 | tool | used for |
 | --- | --- |
 | `git` | branches, commits ahead `↑` / behind `↓`, diffs and reviews |
+| [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) | macOS notifications that show as Herdr's and take you to the agent |
 | [`gh`](https://cli.github.com) | the pull request number on each thread, and opening it in the browser |
 | [`zoxide`](https://github.com/ajeetdsouza/zoxide) | the directories you use, in the session picker |
 | [Claude Code](https://claude.com/claude-code) | resuming a closed thread with `claude --resume` |
@@ -175,7 +176,9 @@ In the agent picker the menu opens over the picker, at the row. The picker stays
 ### The attention strip and notifications
 
 - **The attention strip** sits at the right end of the tab bar. It names the *other* spaces where an agent is waiting on you or has finished, with how long it has been (`api 12m`), the longest wait first. Click one to go there.
-- **Notifications:** while Herdr isn't the app in front, a waiting or finished agent also posts a macOS notification, except during your `quiet_hours`.
+- **Notifications:** while Herdr isn't the app in front, an agent that needs you, finishes or fails also posts a macOS notification, and so does a merged pull request ready to clean up. Clicking one brings Herdr forward and goes to that agent. Each agent has one at a time: a new one replaces its last. Other messages (errors, "press again to close") stay inside the window. Nothing is posted during your `quiet_hours`.
+
+  These go through `terminal-notifier` (`brew install terminal-notifier`). The installer makes a copy of it with Herdr's icon, `~/Applications/Herdr Notifier.app`, so they show as Herdr's; macOS asks once whether to allow them (System Settings → Notifications → Herdr). After updating Herdr or terminal-notifier, run `sh scripts/notifier.sh` to remake it. Without terminal-notifier they fall back to `osascript`: they show as Script Editor's, and clicking one does nothing useful. `~/.config/herdr-app/data/sesh-toast/recent.jsonl` lists the last 40 messages and which went to macOS.
 - **Worktrees:** when you open a new git worktree, the files your repo's `.worktreeinclude` lists are copied into it from the main checkout.
 
 ## Keys
@@ -295,7 +298,7 @@ Herdr mods are trusted code, so here is everything this layout does outside its 
   - `gh`, for pull request numbers (this is the only network access, to GitHub, through your own `gh` login);
   - `zoxide` and `ls`, for the session picker's directories and previews;
   - `sh`, for the `.worktreeinclude` copy and a session's `startup_command`;
-  - `osascript`, for macOS notifications.
+  - `terminal-notifier` (as `~/Applications/Herdr Notifier.app`), or else `osascript`, for macOS notifications.
 - **Files it reads:**
   - `~/.config/herdr-sesh/config.toml`, its settings;
   - `~/.claude/sessions/<pid>.json`, to learn each Claude Code conversation's id so a closed thread can be resumed.

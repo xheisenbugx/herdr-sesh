@@ -1,7 +1,13 @@
-// The herdr-sesh layout's notifications: Herdr's toast, plus a macOS
-// notification when Herdr isn't the app in front (an agent waiting, finished or failed while you're elsewhere),
-// except in the config's [notifications] quiet_hours.
-// Clicking the toast runs its action (e.g. go to the agent) and dismisses it.
+// The herdr-sesh layout's notifications: Herdr's toast, plus a macOS notification for
+// agent events (one waiting on you, finished or failed, a merged PR to clean up) while
+// Herdr isn't the app in front, except in the config's [notifications] quiet_hours.
+// Clicking the toast runs its action (e.g. go to the agent) and dismisses it; clicking
+// the macOS one brings Herdr forward and runs the same action.
+//
+// The macOS one goes through, in order: "Herdr Notifier.app" (scripts/notifier.sh makes
+// it: terminal-notifier with Herdr's icon), terminal-notifier, or osascript (no click
+// action, shown as Script Editor's). The last 40 toasts, and whether each went to macOS,
+// are in ~/.config/herdr-app/data/sesh-toast/recent.jsonl.
 
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -19,16 +25,45 @@ function quiet(now = new Date()) {
 
 const DOT = { error: "blocked", warning: "working", success: "done", info: "accent" };
 
-// An AppleScript string literal.
-const q = (x) => `"${String(x ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+// Actions that go to an agent: Herdr's own "needs you" / "finished" toasts carry one.
+const AGENT_ACTIONS = new Set(["agent.focus", "pane.focus", "terminal.show", "terminal.peek"]);
+// Only agent events go to macOS; the rest (errors, "press again", "copied") stay in the window.
+export function forAgent(p) {
+  const name = String(p.action?.name ?? "");
+  if (AGENT_ACTIONS.has(name) || name.startsWith("sesh-bar.ask-cleanup:")) return true;
+  return /\b(needs you|needs input|is waiting|finished|failed|exited)\b/i.test(String(p.title ?? ""));
+}
+
+// Single-quoted for sh.
+const sq = (x) => `'${String(x).replace(/'/g, "'\\''")}'`;
+
+// $1 title, $2 message, $3 group, $4 click command (or empty).
+const SEND = `
+N="$HOME/Applications/Herdr Notifier.app/Contents/MacOS/terminal-notifier"
+[ -x "$N" ] || N=$(PATH="$PATH:/opt/homebrew/bin:/usr/local/bin" command -v terminal-notifier || true)
+if [ -n "$N" ]; then
+  m=$2; case "$m" in "["*|"-"*) m="\\\\$m" ;; esac
+  if [ -n "$4" ]; then exec "$N" -title "$1" -message "$m" -group "$3" -activate dev.herdr.app -execute "$4"
+  else exec "$N" -title "$1" -message "$m" -group "$3" -activate dev.herdr.app; fi
+fi
+exec osascript -e 'on run a' -e 'display notification (item 2 of a) with title "Herdr" subtitle (item 1 of a)' -e 'end run' "$1" "$2"
+`;
+
+// Keeps the last 40 toasts, to see what went to macOS and what didn't.
+const LOG = `d="$HOME/.config/herdr-app/data/sesh-toast"; mkdir -p "$d"; f="$d/recent.jsonl"
+{ [ -f "$f" ] && tail -n 39 "$f"; printf '%s\\n' "$1"; } > "$f.tmp" && mv "$f.tmp" "$f"`;
 
 export default class Toast extends View {
   init() {
     const p = props() ?? {};
     const w = window();
-    if (!w || w.platform !== "macos" || w.active || !p.title || quiet()) return;
-    const script = `display notification ${q(p.body ?? "")} with title ${q("Herdr")} subtitle ${q(p.title)}`;
-    exec("osascript", ["-e", script], { timeout: 5000 }).catch(() => {});
+    const mac = Boolean(w && w.platform === "macos" && !w.active && p.title && !quiet() && forAgent(p));
+    exec("sh", ["-c", LOG, "sh", JSON.stringify({ at: new Date().toISOString(), title: p.title, body: p.body, level: p.level, action: p.action, macos: mac })], { timeout: 5000 }).catch(() => {});
+    if (!mac) return;
+    const a = p.action?.name ? p.action : null;
+    const click = a ? `PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH" herdr-app do ${sq(a.name)}${a.args && Object.keys(a.args).length ? " " + sq(JSON.stringify(a.args)) : ""}` : "";
+    const group = `herdr-sesh:${a ? a.name + JSON.stringify(a.args ?? {}) : p.title}`;
+    exec("sh", ["-c", SEND, "sh", p.title, p.body || " ", group, click], { timeout: 5000 }).catch(() => {});
   }
 
   render(cx) {
