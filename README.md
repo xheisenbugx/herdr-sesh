@@ -156,7 +156,7 @@ When you pick a directory, Herdr goes to the space already open there, or opens 
 | --- | --- |
 | `enter` | go to the session |
 | `ctrl-a` `ctrl-t` `ctrl-g` `ctrl-z` `ctrl-r` | show all, spaces, configs, zoxide, machines |
-| `ctrl-x` | close the space, or forget a zoxide directory |
+| `ctrl-x` | close the space (press twice within 3 s), or forget a zoxide directory |
 | `ctrl-o` | show or hide the preview |
 | `esc` | quit |
 
